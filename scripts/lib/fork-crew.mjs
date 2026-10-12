@@ -316,19 +316,24 @@ function mergeDisjointEdits(repo, baseline, file, group) {
 }
 
 /**
+ * git merge-file for disjoint crew edits. The child gets minimalEnv() only,
+ * so zone tokens in the parent process are not copied into it.
+ *
  * @param {string} base
  * @param {string} ours
  * @param {string} theirs
+ * @param {typeof spawnSync} [spawn]
  */
-function threeWayMerge(base, ours, theirs) {
+export function threeWayMerge(base, ours, theirs, spawn = spawnSync) {
 	const dir = mkdtempSync(path.join(os.tmpdir(), "madgrix-merge-"));
 	try {
 		writeFileSync(path.join(dir, "base"), base);
 		writeFileSync(path.join(dir, "ours"), ours);
 		writeFileSync(path.join(dir, "theirs"), theirs);
-		const result = spawnSync("git", ["merge-file", "-p", "ours", "base", "theirs"], {
+		const result = spawn("git", ["merge-file", "-p", "ours", "base", "theirs"], {
 			cwd: dir,
 			encoding: "utf8",
+			env: minimalEnv(),
 		});
 		if (result.error || (result.status ?? 1) < 0) {
 			throw new Error("git merge-file failed");

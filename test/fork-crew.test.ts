@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 
-import { authorityComposition, crewAgentIds, loadForkCrew, resolveComposition, runCrewOnFork, verifyFrozenBaseline } from "../scripts/lib/fork-crew.mjs";
+import { BASE_ENV_VARS } from "../scripts/lib/child-env.mjs";
+import { authorityComposition, crewAgentIds, loadForkCrew, resolveComposition, runCrewOnFork, threeWayMerge, verifyFrozenBaseline } from "../scripts/lib/fork-crew.mjs";
 
 const dirs: string[] = [];
 
@@ -238,5 +239,35 @@ describe("fork crew", () => {
 		assert.equal(git(repo, ["rev-parse", "HEAD"]), head);
 		assert.equal(git(repo, ["status", "--porcelain"]), "");
 		assert.equal(git(repo, ["rev-parse", "HEAD"]), head);
+	});
+});
+
+describe("threeWayMerge child environment", () => {
+	it("git merge-file receives minimalEnv and not the zone tokens", () => {
+		const names = ["AGENT_SERVICE_TOKEN", "MADGRIX_AGENT_SECRETS", "CONTROL_SERVICE_TOKEN", "EVALUATION_SERVICE_TOKEN"] as const;
+		const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+		for (const name of names) process.env[name] = `leak-${name}`;
+		try {
+			let seen: { cmd: string; args: readonly string[]; env?: NodeJS.ProcessEnv } | undefined;
+			const spawn = ((cmd: string, args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+				seen = { cmd, args, env: options.env };
+				return { status: 0, stdout: "merged\n", stderr: "", pid: 0, output: [], signal: null };
+			}) as unknown as typeof spawnSync;
+			const merged = threeWayMerge("base\n", "ours\n", "theirs\n", spawn);
+			assert.equal(merged.clean, true);
+			assert.equal(merged.text, "merged\n");
+			assert.ok(seen, "merge-file was spawned");
+			assert.equal(seen.cmd, "git");
+			assert.deepEqual(seen.args, ["merge-file", "-p", "ours", "base", "theirs"]);
+			const env = seen.env ?? {};
+			for (const name of names) assert.equal(env[name], undefined, name);
+			for (const key of Object.keys(env)) assert.ok(BASE_ENV_VARS.includes(key), key);
+			if (process.env.PATH !== undefined) assert.equal(env.PATH, process.env.PATH);
+		} finally {
+			for (const name of names) {
+				if (previous[name] === undefined) delete process.env[name];
+				else process.env[name] = previous[name];
+			}
+		}
 	});
 });
