@@ -8,7 +8,7 @@ The paragraphs below that name `4a8c4cc7b521688f839f0f332605dcefa3984c38` (296 t
 
 `docs/SECURITY.md` is the longer note. This file is the competition map. It does not replace the frozen threat model. The composition rule is `specs/amendments/composition-result-v1.md`. A commit that contains merge-marker bytes is also refused without a composition record: `specs/amendments/unresolved-merge-artifact-v1.md`. The frozen files were not edited.
 
-**Unresolved P0 on the final tree:** none observed in the local suite recorded in `docs/FINAL_INTEGRATION_REPORT.md`. **P1:** a missing, malformed, or mis-bound merge-artifact scan is ineligible and is not permitted. A completed scan that lists no paths can still be permitted. That statement is the evaluation zone's. The promotion container still reads the blobs. The completeness follow-up is in `9670893f36a986a59d153de4fbbf3ef10f1d9687`. It was not run on Cloudflare.
+**Unresolved P0 on the final tree:** the hostile audit of `44fd44ecc43a4daf452678b5378ae98f25ed9449` (`docs/FINAL_HOSTILE_AUDIT.md`) found two P0 and two P1 authority failures that the earlier local suite did not cover. `docs/FINAL_HOSTILE_AUDIT_RETEST.md` records the retest. Those four are closed in that local Node 24 run. The other P2 items in the audit remain open. `git merge-file` in `scripts/lib/fork-crew.mjs` now receives `minimalEnv()`. Nothing in this map was run on Cloudflare. **P1:** a missing, malformed, or mis-bound merge-artifact scan is ineligible and is not permitted. A completed scan that lists no paths can still be permitted. That statement is the evaluation zone's. The promotion container still reads the blobs. The completeness follow-up is in `9670893f36a986a59d153de4fbbf3ef10f1d9687`. It was not run on Cloudflare.
 
 ## Zones
 
@@ -27,7 +27,7 @@ A caller cannot put its zone in JSON. The Worker sets the zone after the bearer 
 
 - A coding agent cannot `POST /tasks/:id/composition`. The route requires the control token. The demo test and the composition route test cover the agent and evaluation tokens (401).
 - `CONFLICTED` has no candidate SHA. Evidence throws. `issuePermit` and `attemptPromotion` return `UNRESOLVED_CONFLICT`, store no permit, and return no canonical-write effect.
-- `RESOLVED` and `COMPOSED` name a new SHA. A contributing SHA is rejected as evidence and as a permit winner.
+- `RESOLVED` and `COMPOSED` name one promotable SHA, `candidate_sha`. A contributing SHA, a previously accepted SHA, an empty republish, and a member SHA omitted from `contributing_shas` are not that SHA. `issuePermit` and `attemptPromotion` return `UNRESOLVED_CONFLICT` with no canonical write (`specs/amendments/exact-composition-candidate-v1.md`).
 - The same canonical record is an idempotent no-op. CONFLICTED cannot be replaced by COMPOSED.
 - The resolver process is not given the control, evaluation, or agent service tokens. `scripts/demo-resolve.mjs` exits 1 if those names are present. The demo test observed that for `CONTROL_SERVICE_TOKEN`.
 
@@ -66,8 +66,8 @@ Each row is fail-closed in the local suite named above. The real Queue and the l
 | 9 | Permit after canonical HEAD moved | `EXPIRED_HEAD_MOVED`. Head-move harness. |
 | 10 | Consumed permit presented again | `ALREADY_CONSUMED`, no second write. Slice harness. |
 | 11 | Duplicate queue event | `ACK_DUP` on `event_key`. In-memory delivery. |
-| 12 | Push for an unknown repo | `REJECTED_OUT_OF_ORDER`, ledgered, not applied. |
-| 13 | Quarantined contender | Excluded from selection. Promotion returns `QUARANTINED_CANDIDATE`. |
+| 12 | Push for an unknown repo, or a stale push on a known fork | Unknown repo is `REJECTED_UNKNOWN_REPO`, ledgered, not applied. A known fork advances `latest_commit` only when `before` is the observed tip. Any other new event is `REQUIRES_RECONCILIATION` and leaves the tip. |
+| 13 | Quarantined or revoked contender | Excluded from selection. Promotion returns `QUARANTINED_CANDIDATE` or `REVOKED_CANDIDATE`. `RELEASED` does not revive the pre-quarantine permit or ACCEPT. Salvage is a new SHA, new evidence, a new verdict, and a new permit. |
 | 14 | Unresolved conflict | `UNRESOLVED_CONFLICT` when composition is `CONFLICTED`, and also when the bundle lists merge-marker paths. `promote.sh` exits 48 if the blobs contain a marker pair even when the bundle omits the field. An omitted or empty field can still be eligible (P1). |
 | 15 | Rebase conflict | Rebase report escalates. Container tests in the LF suite. |
 | 16 | Old evidence on a new SHA | Seam hash mismatch. A rebased SHA needs a new permit. A contributing SHA is refused after RESOLVED. |
