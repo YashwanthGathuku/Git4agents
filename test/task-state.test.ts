@@ -195,7 +195,7 @@ describe("ingestQueueEvent", () => {
 		assert.equal(r2.state.ledger.length, r1.state.ledger.length); // no new entry
 	});
 
-	it("unknown repo → REJECTED_OUT_OF_ORDER (ledgered, not applied)", async () => {
+	it("unknown repo → REJECTED_UNKNOWN_REPO (ledgered, not applied)", async () => {
 		const ctx = makeCtx();
 		const state = stateWithContender(ctx);
 		const event: QueuePushEvent = {
@@ -206,9 +206,9 @@ describe("ingestQueueEvent", () => {
 			after: "commitX",
 		};
 		const r = await ingestQueueEvent(state, event, ctx);
-		assert.equal(r.outcome, "REJECTED_OUT_OF_ORDER");
+		assert.equal(r.outcome, "REJECTED_UNKNOWN_REPO");
 		assert.equal(r.state.contenders["contender-1"].latest_commit, null);
-		assert.ok(r.state.ledger.some((e) => e.kind === "queue_event_rejected_out_of_order"));
+		assert.ok(r.state.ledger.some((e) => e.kind === "queue_event_rejected_unknown_repo"));
 	});
 });
 
@@ -553,7 +553,8 @@ describe("quarantine", () => {
 		);
 		assert.equal(rel.state.quarantine["contender-1"].status, "RELEASED");
 		assert.equal(rel.state.contenders["contender-1"].status, "released");
-		assert.equal(rel.state.evaluations["csha1"].tainted, false);
+		// RELEASED does not clear the quarantine epoch. The old bundle stays tainted.
+		assert.equal(rel.state.evaluations["csha1"].tainted, true);
 
 		// Re-check reproduces the violation → RELEASED denied even with a valid signature.
 		const badRelDet = await operator.determine(

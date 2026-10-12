@@ -444,7 +444,7 @@ export async function runSlice(opts: SliceOptions = {}): Promise<SliceResult> {
 		check(r.outcome === "ACK_DUP", "duplicate delivery must be ACK_DUP");
 		log(`duplicate delivery of contender-1's event → ${r.outcome} (no state change, no effects)`);
 	}
-	// (b) event for an unknown repo → REJECTED_OUT_OF_ORDER
+	// (b) event for an unknown repo → REJECTED_UNKNOWN_REPO
 	{
 		const r = await ingestQueueEvent(
 			state,
@@ -452,7 +452,7 @@ export async function runSlice(opts: SliceOptions = {}): Promise<SliceResult> {
 			ctx,
 		);
 		state = r.state;
-		check(r.outcome === "REJECTED_OUT_OF_ORDER", "unknown repo must be REJECTED_OUT_OF_ORDER");
+		check(r.outcome === "REJECTED_UNKNOWN_REPO", "unknown repo must be REJECTED_UNKNOWN_REPO");
 		log(`event for unknown repo 'ghost-repo' → ${r.outcome} (ledgered, not applied)`);
 
 	}

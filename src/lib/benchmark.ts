@@ -1259,7 +1259,7 @@ async function runAdversarialStratum(seed: number): Promise<AdversarialStratum> 
 			namespace: "q",
 			repo: "fork-a",
 			ref: "main",
-			before: "b0",
+			before: "base0",
 			after: "c1",
 		};
 		const first = await ingestQueueEvent(state, event, ctx);
@@ -1275,7 +1275,7 @@ async function runAdversarialStratum(seed: number): Promise<AdversarialStratum> 
 	});
 	await t(20, 10, "attack-10b duplicate-events (triple delivery still ACK_DUP)", async () => {
 		const state = await miniAuthority();
-		const event: QueuePushEvent = { namespace: "q", repo: "fork-a", ref: "main", before: "b0", after: "c1" };
+		const event: QueuePushEvent = { namespace: "q", repo: "fork-a", ref: "main", before: "base0", after: "c1" };
 		const first = await ingestQueueEvent(state, event, ctx);
 		const second = await ingestQueueEvent(first.state, event, ctx);
 		const third = await ingestQueueEvent(second.state, event, ctx);
@@ -1285,30 +1285,30 @@ async function runAdversarialStratum(seed: number): Promise<AdversarialStratum> 
 	});
 
 	/* -- Attack 11: out-of-order push events --------------------------- */
-	await t(21, 11, "attack-11a out-of-order (unknown repo -> REJECTED_OUT_OF_ORDER)", async () => {
+	await t(21, 11, "attack-11a unknown repo -> REJECTED_UNKNOWN_REPO", async () => {
 		const state = await miniAuthority();
 		const event: QueuePushEvent = {
 			namespace: "q",
 			repo: "ghost-fork",
 			ref: "main",
-			before: "b0",
+			before: "base0",
 			after: "c9",
 		};
 		const r = await ingestQueueEvent(state, event, ctx);
-		expect(r.outcome === "REJECTED_OUT_OF_ORDER", `expected REJECTED_OUT_OF_ORDER, got ${r.outcome}`);
+		expect(r.outcome === "REJECTED_UNKNOWN_REPO", `expected REJECTED_UNKNOWN_REPO, got ${r.outcome}`);
 		const last = r.state.ledger[r.state.ledger.length - 1];
-		expect(last.kind === "queue_event_rejected_out_of_order", "rejection must be ledgered");
+		expect(last.kind === "queue_event_rejected_unknown_repo", "rejection must be ledgered");
 		expect(
 			Object.keys(r.state.contenders).every((id) => r.state.contenders[id].latest_commit === null),
 			"no contender state may be touched by an unknown-repo event",
 		);
-		return "Event for an unknown repo -> REJECTED_OUT_OF_ORDER, ledgered, no contender touched.";
+		return "Event for an unknown repo -> REJECTED_UNKNOWN_REPO, ledgered, no contender touched.";
 	});
 	await t(22, 11, "attack-11b out-of-order (rejected event redelivery -> ACK_DUP)", async () => {
 		const state = await miniAuthority();
-		const event: QueuePushEvent = { namespace: "q", repo: "ghost-fork", ref: "main", before: "b0", after: "c9" };
+		const event: QueuePushEvent = { namespace: "q", repo: "ghost-fork", ref: "main", before: "base0", after: "c9" };
 		const first = await ingestQueueEvent(state, event, ctx);
-		expect(first.outcome === "REJECTED_OUT_OF_ORDER", "setup");
+		expect(first.outcome === "REJECTED_UNKNOWN_REPO", "setup");
 		const second = await ingestQueueEvent(first.state, event, ctx);
 		expect(second.outcome === "ACK_DUP", "rejected event redelivery must dedupe to ACK_DUP");
 		return "Redelivery of a rejected event -> ACK_DUP (event keys are recorded even for rejections).";

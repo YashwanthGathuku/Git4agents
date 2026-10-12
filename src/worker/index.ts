@@ -78,7 +78,7 @@ import type {
 	WorkClaim,
 } from "../lib/types.ts";
 import { SELECTOR_POLICY_VERSION } from "../lib/types.ts";
-import { compositionBlocks } from "../lib/task-state.ts";
+import { authorityRefusal } from "../lib/authority-refusal.ts";
 import { buildWorkGraph } from "../lib/work-graph.ts";
 import type { Effect } from "../lib/task-state.ts";
 import { mergeArtifactAdmissionRefuses } from "../lib/merge-artifacts.ts";
@@ -1127,11 +1127,7 @@ export async function handleVerdict(env: Env, taskId: string, request: Request):
 	// The destination moved past the winner's base: no permit. The control
 	// plane rebases the candidate (POST /tasks/:id/rebase), which makes a new
 	// SHA to evaluate (specs/amendments/rebase-ancestry-v1.md).
-	if (
-		pr.status === 409 &&
-		((pr.body as { outcome?: unknown } | null)?.outcome === "REBASE_REQUIRED" ||
-			(pr.body as { outcome?: unknown } | null)?.outcome === "UNRESOLVED_CONFLICT")
-	) {
+	if (pr.status === 409) {
 		return json({ verdict, permit: null, ...(pr.body as Record<string, unknown>) }, 409);
 	}
 	if (!pr.ok) return json({ verdict, error: "permit_issue_failed", detail: pr.body }, pr.status);
@@ -1170,12 +1166,9 @@ export async function runPromotion(env: Env, taskId: string, permit_id: string):
 	if (permit.consumed) {
 		return { status: 200, body: { outcome: "ALREADY_CONSUMED" satisfies PromotionOutcome, permit_id } };
 	}
-	const quarantine = state.quarantine[permit.contender_id];
-	if (quarantine?.status === "QUARANTINED") {
-		return { status: 409, body: { outcome: "QUARANTINED_CANDIDATE" satisfies PromotionOutcome, permit_id } };
-	}
-	if (compositionBlocks(state, permit.contender_id, permit.winner_candidate_sha)) {
-		return { status: 409, body: { outcome: "UNRESOLVED_CONFLICT" satisfies PromotionOutcome, permit_id } };
+	const refusal = authorityRefusal(state, permit.contender_id, permit.winner_candidate_sha, permit_id);
+	if (refusal) {
+		return { status: 409, body: { outcome: refusal satisfies PromotionOutcome, permit_id } };
 	}
 	const contender = state.contenders[permit.contender_id];
 	if (!contender) return { status: 409, body: { error: "winner_contender_not_found", permit_id } };
@@ -1795,7 +1788,13 @@ export async function queue(batch: QueueBatchLike, env: Env): Promise<void> {
 			effects: Effect[];
 			event_key: string;
 		};
-		if (outcome !== "ACK_DUP" && outcome !== "APPLIED_NEW" && outcome !== "REJECTED_OUT_OF_ORDER") {
+		if (
+			outcome !== "ACK_DUP" &&
+			outcome !== "APPLIED_NEW" &&
+			outcome !== "ALREADY_OBSERVED" &&
+			outcome !== "REQUIRES_RECONCILIATION" &&
+			outcome !== "REJECTED_UNKNOWN_REPO"
+		) {
 			throw new Error(`queue: unexpected outcome ${outcome} for task ${task_id}`);
 		}
 		await executeEffects(port, effects ?? [], env.PROMOTION_WORKFLOW);

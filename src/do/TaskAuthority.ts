@@ -487,10 +487,10 @@ export class TaskAuthority {
 							409,
 						);
 					}
-					if (r.outcome === "UNRESOLVED_CONFLICT") {
+					if (r.outcome !== "ISSUED") {
 						return json(
 							{
-								outcome: "UNRESOLVED_CONFLICT",
+								outcome: r.outcome,
 								winner_sha: body.winner_sha,
 								contender_id: r.contender_id,
 							},

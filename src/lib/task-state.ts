@@ -34,6 +34,8 @@ import {
 	type Signer,
 } from "./attestation.ts";
 import { classifyPair, validateClaim, type ClaimInput } from "./claims.ts";
+import { authorityRefusal } from "./authority-refusal.ts";
+import { compositionEvidenceError, compositionMemberShas } from "./composition-authority.ts";
 import { mergeArtifactAdmissionRefuses, reportedMergeArtifactPaths } from "./merge-artifacts.ts";
 import { verifyReveal } from "./verifiers.ts";
 import {
@@ -288,18 +290,38 @@ export async function registerOperatorKeys(
 /* Queue ingestion: at-least-once, unordered → event_key dedupe.        */
 /* ------------------------------------------------------------------ */
 
-export type IngestOutcome = "ACK_DUP" | "APPLIED_NEW" | "REJECTED_OUT_OF_ORDER";
+export type IngestOutcome =
+	| "ACK_DUP"
+	| "APPLIED_NEW"
+	| "ALREADY_OBSERVED"
+	| "REQUIRES_RECONCILIATION"
+	| "REJECTED_UNKNOWN_REPO";
 
 /**
- * Ingest a Cloudflare Queue push event (spec 5 §3). event_key is derived
- * from content only — never from Queue metadata.
+ * The tip a push must continue from. The last applied commit, or the fork
+ * base when no push has been applied. Null when neither is known: the event
+ * cannot be placed, and it is not treated as the new tip.
+ */
+function observedTip(contender: ContenderRecord): string | null {
+	if (typeof contender.latest_commit === "string" && contender.latest_commit !== "") return contender.latest_commit;
+	if (typeof contender.fork_base === "string" && contender.fork_base !== "") return contender.fork_base;
+	return null;
+}
+
+/**
+ * Ingest a Cloudflare Queue push event (spec 5 §3; specs/amendments/queue-causal-tip-v1.md).
+ * event_key is derived from content only — never from Queue metadata.
+ * Delivery is at-least-once and unordered. A different event_key is not a
+ * duplicate, and it is not evidence that `after` is the newest tip.
+ *
+ * The ingestion boundary has before/after only. It does not guess ancestry.
  *
  * - Seen key → ACK_DUP (idempotent; no state change, no effects).
- * - New key + repo matches a known contender fork → latest_commit=after, APPLIED_NEW.
- * - New key + unknown repo → REJECTED_OUT_OF_ORDER: ledgered, NOT applied.
- *   (Out-of-order delivery for a known repo is absorbed by
- *   latest_commit=after being the newest observed; unknown repos are not
- *   silently adopted.)
+ * - Unknown repo → REJECTED_UNKNOWN_REPO. That is not an out-of-order delivery.
+ * - Known repo, `after` is already the observed tip → ALREADY_OBSERVED. The tip stays.
+ * - Known repo, `before` is the observed tip → APPLIED_NEW. The tip becomes `after`.
+ * - Known repo, `before` is anything else → REQUIRES_RECONCILIATION. The tip stays.
+ *   A later fast-forward whose `before` is the tip may still advance it.
  */
 export async function ingestQueueEvent(
 	state: AuthorityState,
@@ -322,20 +344,47 @@ export async function ingestQueueEvent(
 	if (contenderId === undefined) {
 		const s2 = await appendLedger(
 			withKey,
-			"queue_event_rejected_out_of_order",
+			"queue_event_rejected_unknown_repo",
 			{ event_key, repo: event.repo, ref: event.ref },
 			ctx,
 		);
-		return { state: s2, outcome: "REJECTED_OUT_OF_ORDER", effects: [], event_key };
+		return { state: s2, outcome: "REJECTED_UNKNOWN_REPO", effects: [], event_key };
+	}
+	const contender = withKey.contenders[contenderId];
+	const tip = observedTip(contender);
+	if (tip !== null && event.after === tip) {
+		const s2 = await appendLedger(
+			withKey,
+			"queue_event_already_observed",
+			{ event_key, contender_id: contenderId, before: event.before, after: event.after, latest_commit: tip },
+			ctx,
+		);
+		return { state: s2, outcome: "ALREADY_OBSERVED", effects: [], event_key };
+	}
+	if (tip === null || event.before !== tip) {
+		const s2 = await appendLedger(
+			withKey,
+			"queue_event_requires_reconciliation",
+			{
+				event_key,
+				contender_id: contenderId,
+				before: event.before,
+				after: event.after,
+				latest_commit: contender.latest_commit ?? null,
+				observed_tip: tip,
+			},
+			ctx,
+		);
+		return { state: s2, outcome: "REQUIRES_RECONCILIATION", effects: [], event_key };
 	}
 	const updated = {
-		...withKey.contenders[contenderId],
+		...contender,
 		latest_commit: event.after,
 	};
 	const s2 = await appendLedger(
 		{ ...withKey, contenders: { ...withKey.contenders, [contenderId]: updated } },
 		"queue_event_applied",
-		{ event_key, contender_id: contenderId, after: event.after },
+		{ event_key, contender_id: contenderId, before: event.before, after: event.after },
 		ctx,
 	);
 	return { state: s2, outcome: "APPLIED_NEW", effects: [], event_key };
@@ -596,6 +645,12 @@ export type SubmitEvaluationOutcome = "RECORDED" | "ACK_DUP" | "REPLACEMENT_REJE
  * Other tampering findings (paths outside the claim scope, unsafe paths)
  * fail the gate without quarantine (spec 3 §6 attack 5: REJECT).
  *
+ * Quarantine epoch (specs/amendments/quarantine-authority-epoch-v1.md):
+ * REVOKED rejects a new bundle. QUARANTINED may store a different bundle
+ * only as tainted forensic evidence, which is added to the blocked-SHA list
+ * and is never selectable. RELEASED rejects every SHA on that list. A new
+ * SHA after RELEASED is ordinary evidence and needs its own verdict and permit.
+ *
  * Rejects bundles for a different task.
  */
 export async function submitEvaluation(
@@ -647,15 +702,8 @@ export async function submitEvaluation(
 		: undefined;
 	if (contender === undefined)
 		throw new Error(`evaluation rejected: unknown contender ${JSON.stringify(bundle.contender_id)}`);
-	if (compositionBlocks(state, bundle.contender_id, bundle.candidate_sha)) {
-		const composition = state.composition;
-		const promotable = composition?.status === "COMPOSED" || composition?.status === "RESOLVED";
-		throw new Error(
-			promotable
-				? `evaluation rejected: ${bundle.candidate_sha} is a contributing SHA, not the composition candidate ${composition?.candidate_sha ?? "none"}`
-				: `evaluation rejected: contender ${bundle.contender_id} is ${composition?.status ?? "CONFLICTED"} — an unresolved composition is not a candidate`,
-		);
-	}
+	const compositionError = compositionEvidenceError(state, bundle.contender_id, bundle.candidate_sha);
+	if (compositionError) throw new Error(compositionError);
 	if (contender.latest_commit !== bundle.candidate_sha)
 		throw new Error(
 			`evaluation rejected: candidate ${bundle.candidate_sha} is not the latest observed commit of ` +
@@ -688,6 +736,50 @@ export async function submitEvaluation(
 		);
 		return { state: rejected, outcome: "REPLACEMENT_REJECTED", effects: [] };
 	}
+	const sanctionRecord = Object.hasOwn(state.quarantine, bundle.contender_id)
+		? state.quarantine[bundle.contender_id]
+		: undefined;
+	if (sanctionRecord?.status === "REVOKED") {
+		throw new Error(
+			`evaluation rejected: contender ${bundle.contender_id} is REVOKED — a revoked contender cannot submit evidence`,
+		);
+	}
+	if (sanctionRecord?.status === "RELEASED") {
+		const blocked = sanctionRecord.blocked_candidate_shas;
+		if (!Array.isArray(blocked) || blocked.includes(bundle.candidate_sha)) {
+			throw new Error(
+				`evaluation rejected: ${bundle.candidate_sha} is a quarantined candidate state — salvage requires a new SHA, ` +
+					"then new evidence, a new verdict, and a new permit",
+			);
+		}
+	}
+	if (sanctionRecord?.status === "QUARANTINED") {
+		// Forensic only. tainted is forced on. The bundle_hash field stays the
+		// evaluator's. Eligibility recomputes the hash, and the SHA is added to
+		// the epoch list so a later RELEASED or REVOKED cannot select it.
+		const forensic: EvaluationBundle = { ...bundle, tainted: true };
+		const blocked = new Set(sanctionRecord.blocked_candidate_shas ?? []);
+		blocked.add(bundle.candidate_sha);
+		const record = { ...sanctionRecord, blocked_candidate_shas: [...blocked].sort() };
+		const forensicState: AuthorityState = {
+			...state,
+			evaluations: { ...state.evaluations, [bundle.candidate_sha]: forensic },
+			quarantine: { ...state.quarantine, [bundle.contender_id]: record },
+		};
+		const recorded = await appendLedger(
+			forensicState,
+			"evaluation_recorded_forensic",
+			{
+				candidate_sha: bundle.candidate_sha,
+				bundle_hash: bundle.bundle_hash,
+				contender_id: bundle.contender_id,
+				submitted_by_zone: zone,
+				selectable: false,
+			},
+			ctx,
+		);
+		return { state: recorded, outcome: "RECORDED", effects: [] };
+	}
 	const s2: AuthorityState = {
 		...state,
 		evaluations: { ...state.evaluations, [bundle.candidate_sha]: bundle },
@@ -704,8 +796,9 @@ export async function submitEvaluation(
 		},
 		ctx,
 	);
-	const sanction = state.quarantine[bundle.contender_id]?.status;
-	if ((evalFileChanges?.length ?? 0) > 0 && sanction !== "QUARANTINED" && sanction !== "REVOKED") {
+	// QUARANTINED and REVOKED already returned above. A non-empty list here,
+	// including after RELEASED, is a new mechanical finding.
+	if ((evalFileChanges?.length ?? 0) > 0) {
 		const q = await quarantineContender(s3, bundle.contender_id, "eval_file_modification", bundle.bundle_hash, ctx);
 		return { state: q.state, outcome: "RECORDED", effects: q.effects };
 	}
@@ -938,8 +1031,9 @@ export interface CandidateEvidence {
 }
 
 /**
- * Run the verdict seam over candidate evidence (spec 1 §9). Quarantined
- * contenders are excluded from selection (spec 3 §7). Records the verdict
+ * Run the verdict seam over candidate evidence (spec 1 §9). QUARANTINED and
+ * REVOKED contenders are excluded from selection, as is any SHA the authority
+ * refusal rejects (composition candidate, quarantine epoch). Records the verdict
  * and routes task_status: ACCEPT/ABSTAIN → verdict_reached,
  * REJECT → rejected, ESCALATE → escalated (+ escalation record;
  * promotion BLOCKED while escalated).
@@ -959,7 +1053,17 @@ export async function runVerdictSeam(
 	candidates: CandidateEvidence[],
 	ctx: Ctx,
 ): Promise<{ state: AuthorityState; record: VerdictRecord }> {
-	const ranked: RankedCandidate[] = candidates.map((c) => {
+	const excluded: string[] = [];
+	const admissible: CandidateEvidence[] = [];
+	for (const c of candidates) {
+		const refusal = authorityRefusal(state, c.contender_id, c.candidate_sha);
+		if (refusal) {
+			excluded.push(`candidate ${c.candidate_sha} excluded (${refusal})`);
+			continue;
+		}
+		admissible.push(c);
+	}
+	const ranked: RankedCandidate[] = admissible.map((c) => {
 		const bundle = state.evaluations[c.candidate_sha];
 		if (!bundle)
 			throw new Error(
@@ -981,9 +1085,9 @@ export async function runVerdictSeam(
 		};
 	});
 	const quarantinedContenderIds = Object.values(state.quarantine)
-		.filter((q) => q.status === "QUARANTINED")
+		.filter((q) => q.status === "QUARANTINED" || q.status === "REVOKED")
 		.map((q) => q.contender_id);
-	const record = await runVerdict({
+	const decided = await runVerdict({
 		candidates: ranked,
 		reports: state.verdict_reports,
 		quarantinedContenderIds,
@@ -993,6 +1097,8 @@ export async function runVerdictSeam(
 		sha256Hex: ctx.sha256Hex,
 		labelToSha: state.candidate_labels,
 	});
+	const record: VerdictRecord =
+		excluded.length === 0 ? decided : { ...decided, reasons: [...excluded, ...decided.reasons] };
 	let task_status = state.task_status;
 	let escalations = state.escalations;
 	if (record.state === "ACCEPT" || record.state === "ABSTAIN") {
@@ -1052,22 +1158,6 @@ export function evaluationBases(contender: ContenderRecord): string[] {
 	return bases;
 }
 
-/**
- * A composition blocks promotion of this contender unless it is COMPOSED or
- * RESOLVED and the SHA is that candidate. PENDING, COMPOSING, CONFLICTED, and
- * RESOLVING have no promotable candidate. A contributing SHA cannot stand in
- * for the COMPOSED or RESOLVED candidate. A later SHA that is not a
- * contributing SHA (an empty republish, for example) is not blocked here; it
- * still needs its own evaluation.
- */
-export function compositionBlocks(state: AuthorityState, contenderId: string, sha?: string): boolean {
-	const composition = state.composition;
-	if (!composition || composition.contender_id !== contenderId) return false;
-	if (composition.status !== "COMPOSED" && composition.status !== "RESOLVED") return true;
-	if (sha === undefined) return false;
-	return sha !== composition.candidate_sha && composition.contributing_shas.includes(sha);
-}
-
 const COMPOSITION_NEXT: Record<CompositionRecord["status"], CompositionRecord["status"][]> = {
 	PENDING: ["COMPOSING", "COMPOSED", "CONFLICTED"],
 	COMPOSING: ["COMPOSED", "CONFLICTED"],
@@ -1120,7 +1210,7 @@ function normalizeComposition(input: CompositionRecord): CompositionRecord {
 		}
 	} else if (typeof input.candidate_sha !== "string" || input.candidate_sha === "") {
 		throw new Error("recordComposition: COMPOSED and RESOLVED require a candidate SHA");
-	} else if (input.contributing_shas.includes(input.candidate_sha)) {
+	} else if (compositionMemberShas(input).includes(input.candidate_sha)) {
 		throw new Error("recordComposition: the candidate SHA must be new, not a contributing SHA");
 	}
 	if (input.status === "CONFLICTED" && (!Array.isArray(input.files) || input.files.length === 0)) {
@@ -1224,7 +1314,7 @@ export type IssuePermitResult =
 	  }
 	| {
 			state: AuthorityState;
-			outcome: "UNRESOLVED_CONFLICT";
+			outcome: "UNRESOLVED_CONFLICT" | "QUARANTINED_CANDIDATE" | "REVOKED_CANDIDATE" | "AUTHORITY_EPOCH";
 			permit: null;
 			contender_id: string;
 	  };
@@ -1262,19 +1352,21 @@ export async function issuePermit(
 	if (!ev) throw new Error(`issuePermit: no evaluation bundle for winner ${winner_sha}`);
 	const contender = Object.hasOwn(state.contenders, ev.contender_id) ? state.contenders[ev.contender_id] : undefined;
 	if (!contender) throw new Error(`issuePermit: the winner's contender ${ev.contender_id} is unknown`);
-	if (compositionBlocks(state, ev.contender_id, winner_sha) || mergeArtifactAdmissionRefuses(ev)) {
+	const refusedOutcome = authorityRefusal(state, ev.contender_id, winner_sha);
+	if (refusedOutcome || mergeArtifactAdmissionRefuses(ev)) {
+		const outcome = refusedOutcome ?? "UNRESOLVED_CONFLICT";
 		const refused = await appendLedger(
 			state,
 			"permit_refused",
 			{
-				outcome: "UNRESOLVED_CONFLICT",
+				outcome,
 				winner_sha,
 				contender_id: ev.contender_id,
 				paths: reportedMergeArtifactPaths(ev),
 			},
 			ctx,
 		);
-		return { state: refused, outcome: "UNRESOLVED_CONFLICT", permit: null, contender_id: ev.contender_id };
+		return { state: refused, outcome, permit: null, contender_id: ev.contender_id };
 	}
 	const bases = permitBases(contender, winner_sha);
 	if (!bases.includes(destination_head)) {
@@ -1312,6 +1404,16 @@ export async function issuePermit(
 		},
 		ctx.sha256Hex,
 	);
+	const voided = authorityRefusal(state, ev.contender_id, winner_sha, permitId);
+	if (voided) {
+		const refused = await appendLedger(
+			state,
+			"permit_refused",
+			{ outcome: voided, winner_sha, contender_id: ev.contender_id, permit_id: permitId },
+			ctx,
+		);
+		return { state: refused, outcome: voided, permit: null, contender_id: ev.contender_id };
+	}
 	const existing = state.permits[permitId];
 	if (existing) return { state, outcome: "ISSUED", permit: existing };
 	const permit = await createPermit(
@@ -1344,10 +1446,12 @@ export async function issuePermit(
  * bundle hash != the permit's bound bundle hash → EVAL_BUNDLE_MISMATCH
  * (spec 1 §11 check 4: the permit authorizes promotion under THIS exact
  * evidence — a re-evaluation after issuance supersedes the old permit);
- * winner's contender quarantined → QUARANTINED_CANDIDATE (quarantine
- * registry consulted per spec 3 §7). Any failure → promotion ABORTED,
- * permit NOT consumed, so a legitimate retry after re-evaluation remains
- * possible.
+ * winner's contender quarantined → QUARANTINED_CANDIDATE; revoked →
+ * REVOKED_CANDIDATE; a pre-quarantine permit or quarantined SHA after
+ * RELEASED → AUTHORITY_EPOCH; a composition SHA that is not the recorded
+ * candidate → UNRESOLVED_CONFLICT. Any failure → promotion ABORTED,
+ * permit NOT consumed, so a legitimate retry after a new SHA and a new
+ * permit remains possible. A voided permit is not that retry.
  * On success: permit consumed (+consumed_at), task promoted, and the
  * single canonical_write effect: fast-forward the destination from the
  * permit-bound head (`base`) to the reviewed candidate commit.
@@ -1368,24 +1472,25 @@ export async function attemptPromotion(
 		return { state, outcome: "ALREADY_CONSUMED", effects: [] };
 	}
 	const recordedBundle = state.evaluations[permit.winner_candidate_sha];
-	if (
-		compositionBlocks(state, permit.contender_id, permit.winner_candidate_sha) ||
-		mergeArtifactAdmissionRefuses(recordedBundle)
-	) {
+	const promotionRefusal = authorityRefusal(state, permit.contender_id, permit.winner_candidate_sha, permit_id);
+	if (promotionRefusal || mergeArtifactAdmissionRefuses(recordedBundle)) {
+		const error = promotionRefusal ?? "UNRESOLVED_CONFLICT";
 		const blocked = await appendLedger(
 			state,
 			"promotion_aborted",
 			{
 				permit_id,
-				error: "UNRESOLVED_CONFLICT",
+				error,
 				winner_sha: permit.winner_candidate_sha,
 				paths: reportedMergeArtifactPaths(recordedBundle),
 			},
 			ctx,
 		);
-		return { state: blocked, outcome: "UNRESOLVED_CONFLICT", effects: [] };
+		return { state: blocked, outcome: error, effects: [] };
 	}
-	const winnerQuarantined = state.quarantine[permit.contender_id]?.status === "QUARANTINED";
+	const winnerQuarantined =
+		state.quarantine[permit.contender_id]?.status === "QUARANTINED" ||
+		state.quarantine[permit.contender_id]?.status === "REVOKED";
 	const check = checkPromotion(permit, current_head, tree_sha256, winnerQuarantined);
 	if (!check.ok) {
 		const s2 = await appendLedger(state, "promotion_aborted", { permit_id, error: check.error }, ctx);
@@ -1562,6 +1667,17 @@ export async function quarantineContender(
 ): Promise<{ state: AuthorityState; effects: Effect[] }> {
 	const contender = state.contenders[contender_id];
 	if (!contender) throw new Error(`quarantine: unknown contender ${contender_id}`);
+	const blocked = new Set<string>();
+	for (const [sha, bundle] of Object.entries(state.evaluations)) {
+		if (bundle.contender_id === contender_id) blocked.add(sha);
+	}
+	if (typeof contender.latest_commit === "string" && contender.latest_commit !== "") {
+		blocked.add(contender.latest_commit);
+	}
+	const voided = Object.values(state.permits)
+		.filter((permit) => permit.contender_id === contender_id)
+		.map((permit) => permit.permit_id)
+		.sort();
 	const record: QuarantineRecord = {
 		contender_id,
 		trigger,
@@ -1570,6 +1686,8 @@ export async function quarantineContender(
 		status: "QUARANTINED",
 		reviewed_by: null,
 		review_note: null,
+		blocked_candidate_shas: [...blocked].sort(),
+		voided_permit_ids: voided,
 	};
 	const evaluations: AuthorityState["evaluations"] = Object.fromEntries(
 		Object.entries(state.evaluations).map(([sha, b]) => [
@@ -1651,8 +1769,11 @@ export interface SignedDetermination {
  * mechanical finding). Revocation terminates the contender and keeps the
  * evidence taint.
  *
- * A quarantined candidate state can NEVER be promoted; salvage is a new
- * SHA with full re-evaluation (spec 1 §9.5).
+ * A quarantined candidate state can NEVER be promoted. RELEASED does not
+ * clear taint, does not revive a pre-quarantine permit or ACCEPT, and does
+ * not make a blocked SHA selectable. Salvage is a new SHA, then new
+ * evidence, a new verdict, and a new permit (spec 1 §9.5;
+ * specs/amendments/quarantine-authority-epoch-v1.md).
  */
 export async function reviewQuarantine(
 	state: AuthorityState,
@@ -1716,21 +1837,12 @@ export async function reviewQuarantine(
 				},
 			}
 		: state.contenders;
-	// False-positive release un-taints; revocation keeps the taint.
-	const evaluations =
-		decision === "RELEASED"
-			? Object.fromEntries(
-					Object.entries(state.evaluations).map(([sha, b]) => [
-						sha,
-						b.contender_id === contender_id ? { ...b, tainted: false } : b,
-					]),
-				)
-			: state.evaluations;
+	// Taint, blocked SHAs, and voided permit ids stay. RELEASED is not a
+	// path back to the candidate that was quarantined.
 	const s2: AuthorityState = {
 		...state,
 		quarantine: { ...state.quarantine, [contender_id]: updated },
 		contenders,
-		evaluations,
 	};
 	const s3 = await appendLedger(
 		s2,
