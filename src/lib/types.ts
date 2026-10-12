@@ -352,6 +352,8 @@ export type PromotionOutcome =
 	| "TREE_MISMATCH"
 	| "EVAL_BUNDLE_MISMATCH"
 	| "QUARANTINED_CANDIDATE"
+	| "REVOKED_CANDIDATE"
+	| "AUTHORITY_EPOCH"
 	| "UNRESOLVED_CONFLICT"
 	| "UNKNOWN_PERMIT";
 
@@ -451,6 +453,19 @@ export interface QuarantineRecord {
 	status: QuarantineStatus;
 	reviewed_by: string | null;
 	review_note: string | null;
+	/**
+	 * SHAs that can never be promoted for this contender: the candidate SHAs
+	 * at quarantine entry, plus any SHA whose evidence arrived while
+	 * QUARANTINED. Absent on a record that predates the epoch. A RELEASED
+	 * review does not clear the list (specs/amendments/quarantine-authority-epoch-v1.md).
+	 */
+	blocked_candidate_shas?: string[];
+	/**
+	 * Permit ids that existed when quarantine was entered. They never authorize
+	 * a canonical write, including after RELEASED. Absent on a record that
+	 * predates the epoch; a missing list fails closed.
+	 */
+	voided_permit_ids?: string[];
 }
 
 /* ------------------------------------------------------------------ */
