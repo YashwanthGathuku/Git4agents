@@ -23,7 +23,8 @@
     "fork-crew": "node scripts/run-fork-crew.mjs",
     "evaluate": "node scripts/evaluate-candidate.ts",
     "live:e2e": "node scripts/live-e2e.ts",
-    "demo:memory": "node scripts/demo-memory.ts"
+    "demo:memory": "node scripts/demo-memory.ts",
+    "bench:memory": "node scripts/bench-memory.ts"
   },
   "type": "module",
   "version": "0.1.0"

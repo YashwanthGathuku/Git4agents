@@ -66,11 +66,23 @@ export function readBlobs(repo: string, blobs: string[]): Map<string, string> {
 export interface ReadJob {
 	module: ModuleDef & { files: string[] };
 	blobs: Record<string, string>;
+	/** Benchmark only: simulated per-file "understanding" cost, CPU-bound, in ms. Default 0. */
+	workMs?: number;
+}
+
+/** Spin the CPU for `ms` (a stand-in for per-file analysis work). */
+function spin(ms: number): void {
+	if (ms <= 0) return;
+	const end = performance.now() + ms;
+	while (performance.now() < end) {
+		// busy: deliberately CPU-bound so threads, not I/O, decide the speedup
+	}
 }
 
 /** Build one module's card: read its blobs, extract facts. */
 export async function readModule(repo: string, sha: string, job: ReadJob): Promise<ModuleCard> {
 	const texts = readBlobs(repo, job.module.files.map((f) => job.blobs[f]));
+	for (let i = 0; i < job.module.files.length; i++) spin(job.workMs ?? 0);
 	return buildModuleCard(
 		{ id: job.module.id, paths: job.module.paths },
 		sha,
@@ -127,10 +139,11 @@ export async function readParallel(repo: string, sha: string, jobs: ReadJob[], w
 
 import { planRefresh, reduceRepoMap, repinCard, splitModules, type ModuleConfig, type RefreshPlan, type RepoMap } from "../../src/lib/module-memory.ts";
 
-function jobsFor(modules: Array<ModuleDef & { files: string[] }>, tree: Map<string, string>): ReadJob[] {
+function jobsFor(modules: Array<ModuleDef & { files: string[] }>, tree: Map<string, string>, workMs = 0): ReadJob[] {
 	return modules.map((module) => ({
 		module,
 		blobs: Object.fromEntries(module.files.map((f) => [f, tree.get(f)!])),
+		workMs,
 	}));
 }
 
@@ -144,12 +157,16 @@ export interface PassResult {
 }
 
 /** First pass: map, read every module (N workers, or serial when workers <= 1), reduce. */
-export async function firstPass(repo: string, rev: string, opts: { config?: ModuleConfig; workers?: number } = {}): Promise<PassResult> {
+export async function firstPass(
+	repo: string,
+	rev: string,
+	opts: { config?: ModuleConfig; workers?: number; workMs?: number } = {},
+): Promise<PassResult> {
 	const t0 = performance.now();
 	const sha = resolveSha(repo, rev);
 	const tree = listTree(repo, sha);
 	const modules = splitModules([...tree.keys()], opts.config);
-	const jobs = jobsFor(modules, tree);
+	const jobs = jobsFor(modules, tree, opts.workMs ?? 0);
 	const workers = opts.workers ?? 4;
 	const cards = workers <= 1 ? await readSerial(repo, sha, jobs) : await readParallel(repo, sha, jobs, workers);
 	return { sha, cards, map: reduceRepoMap(sha, cards), files_read: tree.size, files_total: tree.size, ms: performance.now() - t0 };
