@@ -26,7 +26,8 @@
  *   rebase container's report: REBASED/UP_TO_DATE record ancestry, CONFLICT
  *   escalates with the paths as data; specs/amendments/rebase-ancestry-v1.md);
  *   `/promotion/begin` → `beginPromotion` (the reservation is the
- *   linearization point); `/promotion/finalize` → `finalizeReservedPromotion`
+ *   linearization point); `/promotion/abort` → `abortReservedPromotion`
+ *   (a proven no-write terminal outcome); `/promotion/finalize` → `finalizeReservedPromotion`
  *   + `recordPromotionBundle` (signs the ship record with
  *   AUTHORITY_SIGNING_KEY in the same transaction; it does not re-decide
  *   authority for that reservation). Verdict, permit, and quarantine logic
@@ -40,6 +41,7 @@
 import {
 	AgentSecretError,
 	assignCandidateLabels,
+	abortReservedPromotion,
 	beginPromotion,
 	commitVerifier,
 	createAuthority,
@@ -585,6 +587,34 @@ export class TaskAuthority {
 					return json({ error: "winner_contender_not_found", permit_id }, 409);
 				}
 				return json({ outcome: r.outcome, permit_id }, 409);
+			});
+		}
+
+		/* -- POST /promotion/abort — proven no-write terminal outcome ------ */
+		// Marks the IN_FLIGHT reservation ABORTED. Does not consume the permit
+		// and does not authorize a canonical write.
+		if (request.method === "POST" && path === "/promotion/abort") {
+			const parsed = await readJsonBody(request);
+			if (!parsed.ok) return parsed.response;
+			const body = parsed.body as {
+				permit_id?: unknown;
+				promotion_nonce?: unknown;
+				terminal_outcome?: unknown;
+			};
+			if (typeof body.permit_id !== "string" || body.permit_id === "" || typeof body.promotion_nonce !== "string" || body.promotion_nonce === "") {
+				return json({ error: "invalid_promotion_abort" }, 400);
+			}
+			const ctx = await productionCtx();
+			return this.doState.storage.transaction(async () => {
+				const state = await this.loadState();
+				if (state === null) return json({ error: "not_initialized" }, 404);
+				const r = await abortReservedPromotion(state, body.permit_id as string, body.promotion_nonce as string, body.terminal_outcome, ctx);
+				if (r.state !== state) await this.doState.storage.put(STATE_KEY, r.state);
+				if (r.outcome === "ABORTED" || r.outcome === "ALREADY_ABORTED") {
+					return json({ outcome: r.outcome, permit_id: body.permit_id });
+				}
+				if (r.outcome === "UNKNOWN_PERMIT") return json({ outcome: r.outcome, permit_id: body.permit_id }, 404);
+				return json({ outcome: r.outcome, permit_id: body.permit_id }, 409);
 			});
 		}
 

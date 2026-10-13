@@ -58,6 +58,7 @@ import type {
 	PermitRecord,
 	PromotionOutcome,
 	PromotionReservation,
+	TerminalNoWriteOutcome,
 	RebaseConflictData,
 	RebaseRecord,
 	QueuePushEvent,
@@ -1570,6 +1571,14 @@ export async function beginPromotion(
 		if (tree_sha256 !== existing.tree_sha256) return { state, outcome: "TREE_MISMATCH" };
 		return { state, outcome: "RESERVED", reservation: existing };
 	}
+	// An aborted permit is permanently dead. Do not mint another nonce for it.
+	// ABORTED does not block a different permit: only IN_FLIGHT does.
+	if (existing?.status === "ABORTED") {
+		if (!reservationBindingsMatch(existing, permit) || !isTerminalNoWriteOutcome(existing.abort_reason)) {
+			return { state, outcome: "RESERVATION_MISMATCH" };
+		}
+		return { state, outcome: existing.abort_reason };
+	}
 	const otherInFlight = Object.values(reservations).find((reservation) => reservation.status === "IN_FLIGHT");
 	if (otherInFlight) {
 		const blocked = await appendLedger(
@@ -1697,6 +1706,9 @@ export async function finalizeReservedPromotion(
 	if (!permit) return { state, outcome: "UNKNOWN_PERMIT", effects: [] };
 	const reservations = state.promotion_reservations ?? {};
 	const reservation = Object.hasOwn(reservations, permit_id) ? reservations[permit_id] : undefined;
+	if (reservation?.status === "ABORTED") {
+		return { state, outcome: "RESERVATION_MISMATCH", effects: [] };
+	}
 	const consumedAlready = permit.consumed || reservation?.status === "FINALIZED";
 	if (consumedAlready) {
 		if (reservation && !proofMatchesReservation(proof, reservation)) {
@@ -1735,6 +1747,74 @@ export async function finalizeReservedPromotion(
 			},
 		],
 	};
+}
+
+/** promote.sh exits that happen before any destination ref update. */
+export const TERMINAL_NO_WRITE_OUTCOMES: readonly TerminalNoWriteOutcome[] = [
+	"EXPIRED_HEAD_MOVED",
+	"TREE_MISMATCH",
+	"BASELINE_MISMATCH",
+	"UNRESOLVED_CONFLICT",
+	"UNSUPPORTED_TREE_ENTRY",
+];
+
+export function isTerminalNoWriteOutcome(value: unknown): value is TerminalNoWriteOutcome {
+	return typeof value === "string" && (TERMINAL_NO_WRITE_OUTCOMES as readonly string[]).includes(value);
+}
+
+export type AbortPromotionOutcome =
+	| "ABORTED"
+	| "ALREADY_ABORTED"
+	| "RESERVATION_MISMATCH"
+	| "UNKNOWN_PERMIT"
+	| "ALREADY_CONSUMED"
+	| "NOT_ABORTABLE";
+
+/**
+ * Record that an IN_FLIGHT reservation ended without a canonical write.
+ * The reservation stays, with status ABORTED. The permit stays unconsumed
+ * and cannot reserve again. A second call with the same nonce and the same
+ * terminal outcome is a no-op. specs/amendments/promotion-terminal-abort-v1.md.
+ */
+export async function abortReservedPromotion(
+	state: AuthorityState,
+	permit_id: string,
+	promotion_nonce: string,
+	terminal_outcome: unknown,
+	ctx: Ctx,
+): Promise<{ state: AuthorityState; outcome: AbortPromotionOutcome }> {
+	const permit = Object.hasOwn(state.permits, permit_id) ? state.permits[permit_id] : undefined;
+	if (!permit) return { state, outcome: "UNKNOWN_PERMIT" };
+	const reservations = state.promotion_reservations ?? {};
+	const reservation = Object.hasOwn(reservations, permit_id) ? reservations[permit_id] : undefined;
+	if (!reservation || !reservationBindingsMatch(reservation, permit)) {
+		return { state, outcome: "RESERVATION_MISMATCH" };
+	}
+	if (reservation.promotion_nonce !== promotion_nonce) return { state, outcome: "RESERVATION_MISMATCH" };
+	if (reservation.status === "FINALIZED" || permit.consumed) return { state, outcome: "ALREADY_CONSUMED" };
+	if (reservation.status === "ABORTED") {
+		if (reservation.abort_reason === terminal_outcome) return { state, outcome: "ALREADY_ABORTED" };
+		return { state, outcome: "RESERVATION_MISMATCH" };
+	}
+	if (!isTerminalNoWriteOutcome(terminal_outcome)) return { state, outcome: "NOT_ABORTABLE" };
+	if (reservation.status !== "IN_FLIGHT") return { state, outcome: "RESERVATION_MISMATCH" };
+	const aborted: PromotionReservation = { ...reservation, status: "ABORTED", abort_reason: terminal_outcome };
+	const s2: AuthorityState = {
+		...state,
+		promotion_reservations: { ...reservations, [permit_id]: aborted },
+	};
+	const s3 = await appendLedger(
+		s2,
+		"promotion_reservation_aborted",
+		{
+			permit_id,
+			candidate_sha: reservation.candidate_sha,
+			promotion_nonce: reservation.promotion_nonce,
+			terminal_outcome,
+		},
+		ctx,
+	);
+	return { state: s3, outcome: "ABORTED" };
 }
 
 /**

@@ -80,7 +80,14 @@ import type {
 import { SELECTOR_POLICY_VERSION } from "../lib/types.ts";
 import { buildWorkGraph } from "../lib/work-graph.ts";
 import type { Effect } from "../lib/task-state.ts";
-import { AGENT_ID_PATTERN, evaluationBases, resolveAgentBySecret, taskHashFor, type RebaseReport } from "../lib/task-state.ts";
+import {
+	AGENT_ID_PATTERN,
+	evaluationBases,
+	isTerminalNoWriteOutcome,
+	resolveAgentBySecret,
+	taskHashFor,
+	type RebaseReport,
+} from "../lib/task-state.ts";
 import type { PromotionResult, RebaseResult } from "../lib/git-promotion.ts";
 import { computePermitId, TaskAuthority } from "../do/TaskAuthority.ts";
 import { PromotionContainer } from "../do/PromotionContainer.ts";
@@ -1142,6 +1149,44 @@ interface PromotionAnswer {
 }
 
 /**
+ * Abort the reservation after a proven no-write 409. A failed abort is 503
+ * so the workflow retries. The caller still answers 409 only after the
+ * authority has recorded ABORTED or confirmed the same abort.
+ */
+async function abortInFlightReservation(
+	env: Env,
+	taskId: string,
+	permit_id: string,
+	promotion_nonce: string,
+	promotion: Partial<PromotionResult>,
+): Promise<PromotionAnswer> {
+	let aborted: { ok: boolean; status: number; body: unknown };
+	try {
+		aborted = await doRpc(taskStub(env, taskId), "/promotion/abort", {
+			body: { permit_id, promotion_nonce, terminal_outcome: promotion.outcome },
+		});
+	} catch (err) {
+		return {
+			status: 503,
+			body: {
+				error: "promotion_abort_pending",
+				permit_id,
+				terminal_outcome: promotion.outcome,
+				detail: err instanceof Error ? err.message : String(err),
+			},
+		};
+	}
+	const outcome = (aborted.body as { outcome?: unknown } | null)?.outcome;
+	if (!aborted.ok || aborted.status >= 500 || (outcome !== "ABORTED" && outcome !== "ALREADY_ABORTED")) {
+		return {
+			status: 503,
+			body: { error: "promotion_abort_pending", permit_id, terminal_outcome: promotion.outcome, detail: aborted.body },
+		};
+	}
+	return { status: 409, body: { ...promotion, permit_id } };
+}
+
+/**
  * The exact-state canonical promotion of one permit; it runs in the permit's
  * PromotionWorkflow step. It validates the permit and its evidence, mints
  * short-lived Git capabilities, delegates the single canonical write to the
@@ -1223,14 +1268,17 @@ export async function runPromotion(env: Env, taskId: string, permit_id: string):
 		});
 		const promotion = promoRes.body as Partial<PromotionResult>;
 		if (!promoRes.ok) {
-			// The container answers 409 for every terminal refusal
-			// (EXPIRED_HEAD_MOVED, TREE_MISMATCH, PUSH_REJECTED,
-			// UNSUPPORTED_TREE_ENTRY, BASELINE_MISMATCH, UNRESOLVED_CONFLICT):
-			// the step does not
-			// retry those. Its 503s (not running, deadline) stay 503; anything
-			// else is a git failure, 502. The step retries both. The reservation
-			// stays IN_FLIGHT so a retry of this permit reuses the same nonce.
+			// 409 is terminal for the container request. A proven no-write
+			// outcome aborts the reservation before that 409 is returned, so a
+			// later permit can reserve. PUSH_REJECTED stays IN_FLIGHT: a failed
+			// git push does not prove the ref was unchanged. 502, 503, and a
+			// container result that is not a known no-write outcome also stay
+			// IN_FLIGHT. If the abort RPC itself fails, this returns 503 and
+			// the reservation stays IN_FLIGHT until a retry lands the abort.
 			const status = promoRes.status === 409 ? 409 : promoRes.status === 503 ? 503 : 502;
+			if (status === 409 && isTerminalNoWriteOutcome(promotion.outcome)) {
+				return abortInFlightReservation(env, taskId, permit_id, reservation.promotion_nonce, promotion);
+			}
 			return { status, body: { ...promotion, permit_id } };
 		}
 		if (
@@ -1820,9 +1868,10 @@ export const PROMOTION_STEP_CONFIG = {
  * candidate itself, so on a retry it finds that commit already in the
  * destination's history (even under later commits), reports ALREADY_WRITTEN,
  * and the task authority finalizes the same reservation. Only 5xx answers and
- * exceptions are retried; 409s (expired head, tree or baseline mismatch, a
- * refused push, an unsupported tree entry, a quarantine that landed before
- * the reservation) are terminal and leave the permit unconsumed. A quarantine
+ * exceptions are retried. A proven no-write 409 aborts the reservation before
+ * the step treats it as terminal; a failed abort is 503 and is retried.
+ * PUSH_REJECTED stays IN_FLIGHT. A quarantine that landed before the
+ * reservation is a terminal 409 and leaves the permit unconsumed. A quarantine
  * that lands after the reservation does not make that reserved write a 409.
  * (specs/amendments/rebase-ancestry-v1.md,
  * specs/amendments/promotion-runtime-v1.md).
