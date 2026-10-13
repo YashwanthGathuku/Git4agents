@@ -30,8 +30,8 @@ npm install   # if not already done
 npm test
 ```
 
-**Say:** "300 tests, 93 suites, all green — including the slice itself as an integration
-test." **Expected:** `ℹ tests 300 / ℹ pass 300 / ℹ fail 0`. That count is the local LF suite on Node 24. It is not a Cloudflare run. `npm test` needs a `fleet` that prints `summary.agent_ids` (Agentfleet `paper-hardening` `49032db` or newer, or `MADGRIX_FLEET_BIN`).
+**Say:** "345 tests, 106 suites, all green — including the slice itself as an integration
+test." **Expected:** `ℹ tests 345 / ℹ pass 345 / ℹ fail 0`. That count is the local Node 24 suite of this tree on 2026-10-12, with `MADGRIX_FLEET_BIN` unset. It is not a Cloudflare run. `npm test` does not call `fleet`. `fleet validate` runs only when `MADGRIX_FLEET_BIN` is set, and then only as a roster cross-check. It does not execute the sub-agents.
 
 ## 1:30–5:30 — The money: the full loop
 

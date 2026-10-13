@@ -52,7 +52,7 @@ Only the promotion path receives canonical write authority.
 
 ## Competition-critical implementation
 
-The production path now includes:
+The production path in this tree includes the pieces below. None of them has been executed on Cloudflare, and `npm run live:e2e` has not been run:
 
 - Real Artifacts binding through `ArtifactsPort`.
 - WorkClaim registration before agent execution.
@@ -70,7 +70,7 @@ The production path now includes:
 - JSON on every error path; a Durable Object's answer is parsed only when its content-type is JSON.
 - External real-agent runner.
 - Independent real-candidate evaluator.
-- Full live-infrastructure orchestrator: `npm run live:e2e`.
+- Script for the full live-infrastructure path: `npm run live:e2e`. It has not been run.
 - Offline promotion-bundle verifier that trusts only a pinned authority key, never the key embedded in a bundle.
 
 ### What has actually been validated

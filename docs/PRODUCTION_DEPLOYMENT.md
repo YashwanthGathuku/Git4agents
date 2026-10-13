@@ -134,12 +134,16 @@ deployed Worker (`$BASE`); every route except the ledger and the permit check
    202), polls `GET /tasks/:id/promotions/:permit_id` until the instance is
    `complete`, and verifies the signed promotion bundle offline against the pinned
    key. It fails if real Artifact push events do not reach the queue.
-3. Queue dedupe: publish the same push event twice to `madgrix-events`; the second
-   delivery must ACK without effect (the `event_key` appears once in
-   `GET /tasks/<task_id>/ledger`).
+3. Queue dedupe: publish the same push event twice to `madgrix-events`. Delivery
+   is at-least-once. The second delivery of the same `event_key` must ACK
+   without a second effect (`ACK_DUP`; the key appears once in
+   `GET /tasks/<task_id>/ledger`). A different event whose `before` is not the
+   observed tip must not replace `latest_commit`.
 4. DO isolation: an event for one task must not touch another task's DO.
 
-Pass criteria: step 1 and 2 as described; step 3 shows exactly-once effect under
-duplicate delivery; step 4 shows per-task isolation. Any 500, any duplicate side
-effect, or any cross-task state leak is a deployment blocker — record it as a
-spec-5 amendment candidate, do not patch around it.
+Pass criteria: step 1 and 2 as described; step 3 shows at-least-once delivery
+plus idempotent dedupe, not a platform exactly-once guarantee; step 4 shows
+per-task isolation. This queue behavior has not been observed on Cloudflare
+Queue. Any 500, any duplicate side effect, or any cross-task state leak is a
+deployment blocker — record it as a spec-5 amendment candidate, do not patch
+around it.

@@ -121,13 +121,10 @@ Still open, from the audit, not changed here:
 - a blob path that itself contains a newline
 - `resolutionSection` under a `PENDING` stamp
 - a stored permit winner printed next to a plate of `NONE`
-- `docs/DEMO_SCRIPT.md` narrating 300 tests, 93 suites, and a fleet requirement
-- `scripts/run-fork-crew.mjs` saying the parent calls `fleet validate`
-- `docs/GIT_PROBLEMS.md` on TheUstad
-- `docs/PRODUCTION_DEPLOYMENT.md` "exactly-once effect" wording
-- `README.md` "the production path now includes" next to an unrun `live:e2e`
 - `docs/ENTRY_BLUEPRINT.md` `ExternalVerifier` slot
 - a freshly hashed bundle that copies an older bundle's gate booleans
+
+Judge-facing wording corrected after this retest, with no behavior change: `docs/DEMO_SCRIPT.md` narrates 345 tests and 106 suites and does not say `npm test` needs `fleet`; `scripts/run-fork-crew.mjs` says `fleet validate` runs only when `MADGRIX_FLEET_BIN` is set; `docs/GIT_PROBLEMS.md` says TheUstad is the frozen-baseline check; `docs/PRODUCTION_DEPLOYMENT.md` says at-least-once delivery plus idempotent dedupe; `README.md` says the production path is in this tree and has not been executed on Cloudflare.
 
 ## Not done
 

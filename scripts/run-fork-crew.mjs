@@ -4,9 +4,10 @@
  * on that fork, split by role and path, and their commits are combined into
  * the one SHA promotion ships.
  *
- * The parent calls `fleet validate` (not `fleet run`) so Agentfleet stays a
- * subprocess. Copy-baseline remains inside the worker, and only if fork()
- * throws the known 10101 failure. This script never creates a second repo.
+ * `fleet validate` runs only when `MADGRIX_FLEET_BIN` is set, and then only as
+ * a roster cross-check. It does not execute the sub-agents. This script never
+ * calls `fleet run`. Copy-baseline remains inside the worker, and only if
+ * fork() throws the known 10101 failure. This script never creates a second repo.
  *
  * Required:
  *   MADGRIX_BASE_URL, MADGRIX_TASK_ID, MADGRIX_AGENT_SERVICE_TOKEN

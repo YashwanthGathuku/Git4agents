@@ -48,9 +48,9 @@ Smallest next change. Do not redeploy. Do not run a full production `live:e2e` u
 
 What happened. Git4agents needed a way to name agents without hardcoding three ids. Agentfleet (`agent-orchestration-os`, branch `paper-hardening`, `49032db`) is proprietary. Its source must not be copied into this MIT repo.
 
-What is already fixed. The crew runner shells out to `fleet validate` and requires `summary.agent_ids` to equal the crew, in order. `configs/git4agents-fork-crew.yaml` lists `parent`, `sub-api`, `sub-ui`. `configs/git4agents-demo-composition.yaml` lists `parent`, `sub-api`, `sub-ui`, `sub-test`. The runner pairs `configs/demo-composition.json` with that second manifest unless `MADGRIX_FLEET_CONFIG` is set. Roles and path globs live in the JSON config, which this repo owns. `fleet run` is not called, because it would invoke a model.
+What is already fixed. MADGRIX checks the manifest itself. `fleet validate` runs only when `MADGRIX_FLEET_BIN` is set, and then only as a roster cross-check. It does not execute the sub-agents. The default suite does not need `summary.agent_ids`. `configs/git4agents-fork-crew.yaml` lists `parent`, `sub-api`, `sub-ui`. `configs/git4agents-demo-composition.yaml` lists `parent`, `sub-api`, `sub-ui`, `sub-test`. The runner pairs `configs/demo-composition.json` with that second manifest unless `MADGRIX_FLEET_CONFIG` is set. Roles and path globs live in the JSON config, which this repo owns. `fleet run` is not called.
 
-What is still open. Agentfleet is not executing the sub-agents. The file split is the JSON commands. That is intentional. `fleet` 0.3.0 on a PATH that predates Agentfleet `paper-hardening` `49032db` does not print `summary.agent_ids`. The live runner needs that build, or `MADGRIX_FLEET_BIN` pointed at it. This was not run on Cloudflare.
+What is still open. Agentfleet does not execute the sub-agents. The file split is the JSON commands. That is intentional. The sibling contender swarm still needs Agentfleet `summary.agent_ids` or `MADGRIX_AGENT_IDS`. An older `fleet` 0.3.0 fails only an explicit `MADGRIX_FLEET_BIN` cross-check. This was not run on Cloudflare.
 
 Smallest next change. Keep `fleet validate`. Do not call `fleet run`. Do not vendor Agentfleet.
 
@@ -66,9 +66,11 @@ Smallest next change. Do not put the marker commit back. Keep the CONFLICTED res
 
 ## 7. TheUstad is not wired
 
-What happened. TheUstad is not connected to Git4agents. The September branch `claude/project-analysis-bugs-xdq0xz` is at `f4602b2a`. The user can relicense it to MIT. An earlier plan was to vendor it and call it as a subprocess from the contender runner.
+Current tree: TheUstad is wired as a frozen-baseline check, not as a verifier of the composed or resolved candidate. `verifyFrozenBaseline` runs `scripts/theustad-baseline-check.py` before combine. It accepts only exit 0 and `FINAL VERIFIED`, and only when `HEAD` equals the frozen baseline and `git status --porcelain` is empty. The paragraphs below are the September plan. They are not a description of this SHA.
 
-What is already fixed. Nothing. It is not in this tree.
+What happened. The September plan treated TheUstad as unwired. The branch `claude/project-analysis-bugs-xdq0xz` was at `f4602b2a`. The user can relicense it to MIT. An earlier plan was to vendor it and call it as a subprocess from the contender runner.
+
+What the September plan said was fixed. Nothing. That sentence is not true of this tree. The baseline check above is wired.
 
 What is still open. All of it. Do not vendor it, and do not subprocess it, as part of the work this plan schedules first.
 
@@ -87,4 +89,4 @@ Build in this order. Stop if a step is not proven by a local test. Do not deploy
 
 3. Narrate the subscription pause if the demo is live. Keep the `f2346ed4` wait. Budget 30 seconds for a new subscription and up to 30 seconds for the queue batch. If an empty republish is created, say so, and show that its tree is the combined work.
 
-4. Leave these alone while doing 1–3: no `getHead`; `readCommit` for the baseline object; `log()` for tips; copy-baseline only on `10101`; `fleet validate` only; no `fleet run`; no TheUstad; worker root `not_found` stays; `MADGRIX_AGENT_IDS` still means the sibling race.
+4. Leave these alone while doing 1–3: no `getHead`; `readCommit` for the baseline object; `log()` for tips; copy-baseline only on `10101`; `fleet validate` only when `MADGRIX_FLEET_BIN` is set; no `fleet run`; TheUstad only as the frozen-baseline check, not on the composed tree; worker root `not_found` stays; `MADGRIX_AGENT_IDS` still means the sibling race.
