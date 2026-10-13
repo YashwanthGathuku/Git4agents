@@ -31,3 +31,19 @@ openssl pkey -in /secure/location/authority.pem -pubout -out keys/authority.pub
 
 Without `AUTHORITY_SIGNING_KEY`, `/promotion/finalize` answers 503 and consumes
 nothing, so a promotion is never recorded without its signed ship record.
+
+## Running `npm run live:e2e` before `authority.pub` is committed
+
+The Worker is not deployed, so no public key can be fetched from it, and none
+is committed. Until the operator generates the pair above, set
+`MADGRIX_TRUST_KEY` to the public half of the key you uploaded as
+`AUTHORITY_SIGNING_KEY`:
+
+```bash
+openssl pkey -in /secure/location/authority.pem -pubout -out /secure/location/authority.pub
+export MADGRIX_TRUST_KEY=/secure/location/authority.pub
+```
+
+The `live:e2e` preflight exits 2 with `authority public key not found` when
+neither `MADGRIX_TRUST_KEY` nor `keys/authority.pub` exists, before any task is
+created. Once the production pair exists, commit only `keys/authority.pub`.
