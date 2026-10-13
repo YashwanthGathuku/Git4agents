@@ -29,6 +29,8 @@ A lost finalize retries the same reservation. If the destination already contain
 
 `attemptPromotion` is begin plus finalize of that reservation for in-process callers. A head or tree that is not the permit binding fails before a reservation is stored.
 
+A container 409 that `promote.sh` returns before any destination ref update is not left `IN_FLIGHT`. That case is `specs/amendments/promotion-terminal-abort-v1.md`. `PUSH_REJECTED`, a 502, a 503, and a lost finalize stay `IN_FLIGHT`.
+
 ## (4) What this amendment does not say
 
 It does not undo a container write. It does not let a post-reservation quarantine delete the quarantine record. It does not let one permit hold two nonces. It does not claim this transition was observed on Cloudflare.

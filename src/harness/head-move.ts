@@ -344,5 +344,9 @@ if (isMain) {
 	const { SELECTOR_POLICY_INPUT } = await import("../do/TaskAuthority.ts");
 	const ctx = defaultCtx(await sha256Hex(SELECTOR_POLICY_INPUT));
 	await runHeadMoveScenario(ctx);
-	console.log("HEAD-MOVE OK: the same SHA is refused at the moved head; only the rebased SHA was promoted.");
+	const { assertWorkerHeadMoveRecovery } = await import("./worker-head-move.ts");
+	await assertWorkerHeadMoveRecovery();
+	console.log(
+		"HEAD-MOVE OK: the library path and Worker runPromotion both refuse the stale SHA and promote only the rebased SHA.",
+	);
 }

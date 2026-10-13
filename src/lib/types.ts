@@ -358,7 +358,23 @@ export type PromotionOutcome =
 	| "UNKNOWN_PERMIT"
 	| "RESERVATION_MISMATCH"
 	| "PROMOTION_IN_FLIGHT"
-	| "TASK_ALREADY_PROMOTED";
+	| "TASK_ALREADY_PROMOTED"
+	| "BASELINE_MISMATCH"
+	| "UNSUPPORTED_TREE_ENTRY";
+
+/**
+ * Container outcomes whose promote.sh path exits before any destination ref
+ * update. PUSH_REJECTED is not in this list: the script maps every failed
+ * `git push` to it, and a dropped status after the remote accepted the
+ * update is not distinguishable from a rejected update.
+ * specs/amendments/promotion-terminal-abort-v1.md.
+ */
+export type TerminalNoWriteOutcome =
+	| "EXPIRED_HEAD_MOVED"
+	| "TREE_MISMATCH"
+	| "BASELINE_MISMATCH"
+	| "UNRESOLVED_CONFLICT"
+	| "UNSUPPORTED_TREE_ENTRY";
 
 /**
  * The promotion linearization point (specs/amendments/promotion-reservation-v1.md).
@@ -383,7 +399,12 @@ export interface PromotionReservation {
 	task_hash: string;
 	baseline_commit: string;
 	selector_policy_hash: string;
-	status: "IN_FLIGHT" | "FINALIZED";
+	status: "IN_FLIGHT" | "FINALIZED" | "ABORTED";
+	/**
+	 * Present only when status is ABORTED. The container outcome that proved
+	 * this promotion did not update the destination ref.
+	 */
+	abort_reason?: TerminalNoWriteOutcome;
 }
 
 /**
@@ -549,9 +570,11 @@ export interface AuthorityState {
 	/** Keyed by permit_id. */
 	permits: Record<string, PermitRecord>;
 	/**
-	 * In-flight and finalized promotion reservations, keyed by permit_id.
-	 * Absent until the first beginPromotion. One IN_FLIGHT reservation per task.
-	 * specs/amendments/promotion-reservation-v1.md.
+	 * Promotion reservations, keyed by permit_id. Absent until the first
+	 * beginPromotion. One IN_FLIGHT reservation per task. ABORTED is terminal
+	 * for that permit and does not block a different permit.
+	 * specs/amendments/promotion-reservation-v1.md,
+	 * specs/amendments/promotion-terminal-abort-v1.md.
 	 */
 	promotion_reservations?: Record<string, PromotionReservation>;
 	/** Keyed by contender_id. */
