@@ -1393,7 +1393,9 @@ export async function issuePermit(
 		throw new Error(
 			`issuePermit: no ACCEPT verdict for ${winner_sha} (latest: ${latest ? latest.state : "none"}) — no permit without eligibility`,
 		);
-	if (state.task_status === "escalated")
+	// A later ACCEPT verdict rewrites task_status, so the status alone is not
+	// enough: any unresolved escalation keeps promotion BLOCKED.
+	if (state.task_status === "escalated" || state.escalations.some((e) => !e.resolved))
 		throw new Error("issuePermit: promotion BLOCKED — task is escalated (spec 1 §9.4)");
 	const ev = state.evaluations[winner_sha];
 	if (!ev) throw new Error(`issuePermit: no evaluation bundle for winner ${winner_sha}`);

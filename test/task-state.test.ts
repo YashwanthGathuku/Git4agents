@@ -649,6 +649,23 @@ describe("escalation", () => {
 	});
 });
 
+describe("escalation survives a later ACCEPT", () => {
+	it("an unresolved escalation still blocks issuePermit after a new ACCEPT verdict", async () => {
+		const ctx = makeCtx();
+		const bundle = await makeBundle();
+		let state = await authorityWithAccept(ctx, bundle);
+		state = (await escalateToOperator(state, "rebase conflict", ctx)).state;
+		const again = await runVerdictSeam(
+			state,
+			[{ contender_id: bundle.contender_id, candidate_sha: bundle.candidate_sha, blast_radius: 1, change_surface: 1 }],
+			ctx,
+		);
+		assert.equal(again.record.state, "ACCEPT");
+		assert.equal(again.state.task_status, "verdict_reached");
+		await assert.rejects(issuePermit(again.state, "csha1", "acme/api", BASELINE, ctx), /BLOCKED/);
+	});
+});
+
 describe("ledger + task hash", () => {
 	it("every transition appends a content-hashed ledger entry", async () => {
 		const ctx = makeCtx();
