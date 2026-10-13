@@ -35,7 +35,7 @@ import {
 } from "./attestation.ts";
 import { classifyPair, validateClaim, type ClaimInput } from "./claims.ts";
 import { authorityRefusal } from "./authority-refusal.ts";
-import { compositionEvidenceError, compositionMemberShas } from "./composition-authority.ts";
+import { compositionEvidenceError, compositionMemberShas, promotableCompositionSha } from "./composition-authority.ts";
 import { mergeArtifactAdmissionRefuses, reportedMergeArtifactPaths } from "./merge-artifacts.ts";
 import { verifyReveal } from "./verifiers.ts";
 import {
@@ -57,6 +57,7 @@ import type {
 	LedgerEntry,
 	PermitRecord,
 	PromotionOutcome,
+	PromotionReservation,
 	RebaseConflictData,
 	RebaseRecord,
 	QueuePushEvent,
@@ -295,7 +296,32 @@ export type IngestOutcome =
 	| "APPLIED_NEW"
 	| "ALREADY_OBSERVED"
 	| "REQUIRES_RECONCILIATION"
-	| "REJECTED_UNKNOWN_REPO";
+	| "REJECTED_UNKNOWN_REPO"
+	| "REJECTED_INVALID_EVENT";
+
+function isQueuePushShape(event: unknown): event is QueuePushEvent {
+	if (!event || typeof event !== "object") return false;
+	const candidate = event as QueuePushEvent;
+	return (
+		typeof candidate.namespace === "string" &&
+		typeof candidate.repo === "string" &&
+		typeof candidate.ref === "string" &&
+		typeof candidate.before === "string" &&
+		typeof candidate.after === "string"
+	);
+}
+
+/**
+ * A push that must not become latest_commit. Empty and whitespace-only values
+ * are not commit ids. Forty or sixty-four zeros is a ref deletion, not a tip.
+ * trim() detects those values. It is not used to store a normalized id.
+ */
+function invalidContenderPush(event: QueuePushEvent): boolean {
+	if (event.repo.trim() === "" || event.ref.trim() === "") return true;
+	if (event.after.trim() === "") return true;
+	if (/^0{40}$/.test(event.after) || /^0{64}$/.test(event.after)) return true;
+	return false;
+}
 
 /**
  * The tip a push must continue from. The last applied commit, or the fork
@@ -317,6 +343,9 @@ function observedTip(contender: ContenderRecord): string | null {
  * The ingestion boundary has before/after only. It does not guess ancestry.
  *
  * - Seen key → ACK_DUP (idempotent; no state change, no effects).
+ * - Empty, whitespace-only, or zero-object `after`, or a push that is not a
+ *   contender event shape → REJECTED_INVALID_EVENT. The tip stays. The key is
+ *   recorded so a redelivery is ACK_DUP (specs/amendments/queue-nonempty-tip-v1.md).
  * - Unknown repo → REJECTED_UNKNOWN_REPO. That is not an out-of-order delivery.
  * - Known repo, `after` is already the observed tip → ALREADY_OBSERVED. The tip stays.
  * - Known repo, `before` is the observed tip → APPLIED_NEW. The tip becomes `after`.
@@ -328,8 +357,11 @@ export async function ingestQueueEvent(
 	event: QueuePushEvent,
 	ctx: Ctx,
 ): Promise<{ state: AuthorityState; outcome: IngestOutcome; effects: Effect[]; event_key: string }> {
+	const shaped = isQueuePushShape(event);
 	const event_key = await ctx.sha256Hex(
-		joinHashParts(event.namespace, event.repo, event.ref, event.before, event.after),
+		shaped
+			? joinHashParts(event.namespace, event.repo, event.ref, event.before, event.after)
+			: canonicalJson(event),
 	);
 	if (state.seen_event_keys.includes(event_key)) {
 		return { state, outcome: "ACK_DUP", effects: [], event_key };
@@ -338,6 +370,21 @@ export async function ingestQueueEvent(
 		...state,
 		seen_event_keys: [...state.seen_event_keys, event_key],
 	};
+	if (!shaped || invalidContenderPush(event)) {
+		const s2 = await appendLedger(
+			withKey,
+			"queue_event_rejected_invalid",
+			{
+				event_key,
+				repo: shaped ? event.repo : null,
+				ref: shaped ? event.ref : null,
+				before: shaped ? event.before : null,
+				after: shaped ? event.after : null,
+			},
+			ctx,
+		);
+		return { state: s2, outcome: "REJECTED_INVALID_EVENT", effects: [], event_key };
+	}
 	const contenderId = Object.keys(withKey.contenders).find(
 		(id) => withKey.contenders[id].fork_repo === event.repo,
 	);
@@ -1438,39 +1485,117 @@ export async function issuePermit(
 	return { state: s3, outcome: "ISSUED", permit };
 }
 
+export type BeginPromotionOutcome =
+	| "RESERVED"
+	| PromotionOutcome
+	| "PERMIT_ID_INVALID"
+	| "WINNER_CONTENDER_NOT_FOUND";
+
+export interface PromotionProof {
+	promoted_sha: string;
+	tree_sha256: string;
+	verified_base: string;
+	promotion_nonce: string;
+}
+
+function reservationBindingsMatch(reservation: PromotionReservation, permit: PermitRecord): boolean {
+	return (
+		reservation.permit_id === permit.permit_id &&
+		reservation.contender_id === permit.contender_id &&
+		reservation.candidate_sha === permit.winner_candidate_sha &&
+		reservation.tree_sha256 === permit.winning_tree_sha256 &&
+		reservation.expected_destination_head === permit.expected_destination_head &&
+		reservation.evaluation_bundle_hash === permit.evaluation_bundle_hash &&
+		reservation.destination_repo === permit.destination_repo &&
+		reservation.task_hash === permit.task_hash &&
+		reservation.baseline_commit === permit.baseline_commit &&
+		reservation.selector_policy_hash === permit.selector_policy_hash &&
+		reservation.issued_at === permit.issued_at
+	);
+}
+
+function proofMatchesReservation(proof: PromotionProof, reservation: PromotionReservation): boolean {
+	return (
+		proof.promotion_nonce === reservation.promotion_nonce &&
+		proof.promoted_sha === reservation.candidate_sha &&
+		proof.tree_sha256 === reservation.tree_sha256 &&
+		proof.verified_base === reservation.expected_destination_head
+	);
+}
+
+/** SHA-256 of the refusal-relevant snapshot at the moment a reservation is taken. */
+async function promotionAuthorityEpoch(state: AuthorityState, contenderId: string, ctx: Ctx): Promise<string> {
+	const record = Object.hasOwn(state.quarantine, contenderId) ? state.quarantine[contenderId] : undefined;
+	const composition = state.composition;
+	return ctx.sha256Hex(
+		canonicalJson({
+			contender_id: contenderId,
+			quarantine_status: record?.status ?? null,
+			blocked_candidate_shas: record?.blocked_candidate_shas ?? null,
+			voided_permit_ids: record?.voided_permit_ids ?? null,
+			composition_owner: composition?.contender_id ?? null,
+			composition_status: composition?.status ?? null,
+			promotable_sha: composition ? promotableCompositionSha(composition) : null,
+			ledger_head: state.ledger.length === 0 ? "" : state.ledger[state.ledger.length - 1].entry_hash,
+		}),
+	);
+}
+
 /**
- * Attempt promotion with a permit (spec 1 §11), in order:
- * unknown → UNKNOWN_PERMIT; consumed → ALREADY_CONSUMED (no-op ACK, not
- * an error); expected_destination_head != current HEAD →
- * EXPIRED_HEAD_MOVED; tree mismatch → TREE_MISMATCH; stored evaluation
- * bundle hash != the permit's bound bundle hash → EVAL_BUNDLE_MISMATCH
- * (spec 1 §11 check 4: the permit authorizes promotion under THIS exact
- * evidence — a re-evaluation after issuance supersedes the old permit);
- * winner's contender quarantined → QUARANTINED_CANDIDATE; revoked →
- * REVOKED_CANDIDATE; a pre-quarantine permit or quarantined SHA after
- * RELEASED → AUTHORITY_EPOCH; a composition SHA that is not the recorded
- * candidate → UNRESOLVED_CONFLICT. Any failure → promotion ABORTED,
- * permit NOT consumed, so a legitimate retry after a new SHA and a new
- * permit remains possible. A voided permit is not that retry.
- * On success: permit consumed (+consumed_at), task promoted, and the
- * single canonical_write effect: fast-forward the destination from the
- * permit-bound head (`base`) to the reviewed candidate commit.
+ * Linearize one promotion (specs/amendments/promotion-reservation-v1.md).
+ *
+ * The check and the reservation are one transition. A later quarantine does
+ * not apply to an IN_FLIGHT reservation of this permit: a second call returns
+ * that same reservation and the same promotion_nonce, with no second ledger
+ * entry. A permit that was never reserved is refused from the authority state
+ * inside this call. The permit is not consumed here.
  */
-export async function attemptPromotion(
+export async function beginPromotion(
 	state: AuthorityState,
 	permit_id: string,
 	current_head: string,
 	tree_sha256: string,
 	ctx: Ctx,
-): Promise<{ state: AuthorityState; outcome: PromotionOutcome; effects: Effect[] }> {
-	const permit = state.permits[permit_id];
-	if (!permit) {
-		return { state, outcome: "UNKNOWN_PERMIT", effects: [] };
+): Promise<{ state: AuthorityState; outcome: BeginPromotionOutcome; reservation?: PromotionReservation }> {
+	const permit = Object.hasOwn(state.permits, permit_id) ? state.permits[permit_id] : undefined;
+	if (!permit) return { state, outcome: "UNKNOWN_PERMIT" };
+	const reservations = state.promotion_reservations ?? {};
+	const existing = Object.hasOwn(reservations, permit_id) ? reservations[permit_id] : undefined;
+	if (permit.consumed || existing?.status === "FINALIZED") {
+		return { state, outcome: "ALREADY_CONSUMED" };
 	}
-	if (permit.consumed) {
-		// Single-consume idempotency: a second presentation is a no-op ACK.
-		return { state, outcome: "ALREADY_CONSUMED", effects: [] };
+	if (existing?.status === "IN_FLIGHT") {
+		if (!reservationBindingsMatch(existing, permit)) return { state, outcome: "RESERVATION_MISMATCH" };
+		if (current_head !== existing.expected_destination_head) return { state, outcome: "EXPIRED_HEAD_MOVED" };
+		if (tree_sha256 !== existing.tree_sha256) return { state, outcome: "TREE_MISMATCH" };
+		return { state, outcome: "RESERVED", reservation: existing };
 	}
+	const otherInFlight = Object.values(reservations).find((reservation) => reservation.status === "IN_FLIGHT");
+	if (otherInFlight) {
+		const blocked = await appendLedger(
+			state,
+			"promotion_aborted",
+			{ permit_id, error: "PROMOTION_IN_FLIGHT", blocking_permit_id: otherInFlight.permit_id },
+			ctx,
+		);
+		return { state: blocked, outcome: "PROMOTION_IN_FLIGHT" };
+	}
+	const recomputed = await buildPermitId(
+		{
+			task_hash: permit.task_hash,
+			baseline_commit: permit.baseline_commit,
+			winning_tree_sha256: permit.winning_tree_sha256,
+			evaluation_bundle_hash: permit.evaluation_bundle_hash,
+			selector_policy_hash: permit.selector_policy_hash,
+			expected_destination_head: permit.expected_destination_head,
+		},
+		ctx.sha256Hex,
+	);
+	if (recomputed !== permit.permit_id) return { state, outcome: "PERMIT_ID_INVALID" };
+	const contender = Object.hasOwn(state.contenders, permit.contender_id)
+		? state.contenders[permit.contender_id]
+		: undefined;
+	if (!contender) return { state, outcome: "WINNER_CONTENDER_NOT_FOUND" };
 	const recordedBundle = state.evaluations[permit.winner_candidate_sha];
 	const promotionRefusal = authorityRefusal(state, permit.contender_id, permit.winner_candidate_sha, permit_id);
 	if (promotionRefusal || mergeArtifactAdmissionRefuses(recordedBundle)) {
@@ -1486,24 +1611,21 @@ export async function attemptPromotion(
 			},
 			ctx,
 		);
-		return { state: blocked, outcome: error, effects: [] };
+		return { state: blocked, outcome: error };
 	}
-	const winnerQuarantined =
-		state.quarantine[permit.contender_id]?.status === "QUARANTINED" ||
-		state.quarantine[permit.contender_id]?.status === "REVOKED";
-	const check = checkPromotion(permit, current_head, tree_sha256, winnerQuarantined);
+	// Head and tree are the permit's own binding when the caller presents them.
+	// A live git head that has moved is the container's compare-and-swap, not
+	// a second authority read. winnerQuarantined is false: authorityRefusal
+	// already applied, and this check must not refuse a status begin already
+	// accepted.
+	const check = checkPromotion(permit, current_head, tree_sha256, false);
 	if (!check.ok) {
-		const s2 = await appendLedger(state, "promotion_aborted", { permit_id, error: check.error }, ctx);
-		return { state: s2, outcome: check.error, effects: [] };
+		const aborted = await appendLedger(state, "promotion_aborted", { permit_id, error: check.error }, ctx);
+		return { state: aborted, outcome: check.error };
 	}
-	// Spec 1 §11 check (4): the permit binds evaluation_bundle_hash. If the
-	// candidate was re-evaluated after the permit was issued, the stored
-	// bundle no longer matches the bound evidence — the permit authorizes
-	// promotion under the OLD evidence only. Abort WITHOUT consuming, so a
-	// fresh permit issued after the re-evaluation can promote.
 	const storedBundle = state.evaluations[permit.winner_candidate_sha];
 	if (!storedBundle || storedBundle.bundle_hash !== permit.evaluation_bundle_hash) {
-		const s2 = await appendLedger(
+		const aborted = await appendLedger(
 			state,
 			"promotion_aborted",
 			{
@@ -1514,28 +1636,141 @@ export async function attemptPromotion(
 			},
 			ctx,
 		);
-		return { state: s2, outcome: "EVAL_BUNDLE_MISMATCH", effects: [] };
+		return { state: aborted, outcome: "EVAL_BUNDLE_MISMATCH" };
+	}
+	const reservation: PromotionReservation = {
+		permit_id,
+		contender_id: permit.contender_id,
+		candidate_sha: permit.winner_candidate_sha,
+		tree_sha256: permit.winning_tree_sha256,
+		expected_destination_head: permit.expected_destination_head,
+		evaluation_bundle_hash: permit.evaluation_bundle_hash,
+		authority_epoch: await promotionAuthorityEpoch(state, permit.contender_id, ctx),
+		promotion_nonce: ctx.randomHex(32),
+		destination_repo: permit.destination_repo,
+		source_repo: contender.fork_repo,
+		issued_at: permit.issued_at,
+		task_hash: permit.task_hash,
+		baseline_commit: permit.baseline_commit,
+		selector_policy_hash: permit.selector_policy_hash,
+		status: "IN_FLIGHT",
+	};
+	const reserved: AuthorityState = {
+		...state,
+		promotion_reservations: { ...reservations, [permit_id]: reservation },
+	};
+	const s2 = await appendLedger(
+		reserved,
+		"promotion_reserved",
+		{
+			permit_id,
+			contender_id: reservation.contender_id,
+			candidate_sha: reservation.candidate_sha,
+			tree_sha256: reservation.tree_sha256,
+			expected_destination_head: reservation.expected_destination_head,
+			evaluation_bundle_hash: reservation.evaluation_bundle_hash,
+			authority_epoch: reservation.authority_epoch,
+			promotion_nonce: reservation.promotion_nonce,
+		},
+		ctx,
+	);
+	return { state: s2, outcome: "RESERVED", reservation };
+}
+
+/**
+ * Consume the reservation beginPromotion already took. This does not call
+ * authorityRefusal. A quarantine that landed after that reservation stays in
+ * the authority and still blocks every later permit; it does not make this
+ * reserved write unauthorized. A proof that is not the reservation fails
+ * closed and does not consume the permit.
+ */
+export async function finalizeReservedPromotion(
+	state: AuthorityState,
+	permit_id: string,
+	proof: PromotionProof,
+	ctx: Ctx,
+): Promise<{ state: AuthorityState; outcome: PromotionOutcome; effects: Effect[] }> {
+	const permit = Object.hasOwn(state.permits, permit_id) ? state.permits[permit_id] : undefined;
+	if (!permit) return { state, outcome: "UNKNOWN_PERMIT", effects: [] };
+	const reservations = state.promotion_reservations ?? {};
+	const reservation = Object.hasOwn(reservations, permit_id) ? reservations[permit_id] : undefined;
+	const consumedAlready = permit.consumed || reservation?.status === "FINALIZED";
+	if (consumedAlready) {
+		if (reservation && !proofMatchesReservation(proof, reservation)) {
+			return { state, outcome: "RESERVATION_MISMATCH", effects: [] };
+		}
+		return { state, outcome: "ALREADY_CONSUMED", effects: [] };
+	}
+	if (!reservation || reservation.status !== "IN_FLIGHT" || !proofMatchesReservation(proof, reservation)) {
+		const aborted = await appendLedger(
+			state,
+			"promotion_aborted",
+			{ permit_id, error: "RESERVATION_MISMATCH" },
+			ctx,
+		);
+		return { state: aborted, outcome: "RESERVATION_MISMATCH", effects: [] };
 	}
 	const consumed: PermitRecord = { ...permit, consumed: true, consumed_at: ctx.now() };
+	const finalized: PromotionReservation = { ...reservation, status: "FINALIZED" };
 	const s2: AuthorityState = {
 		...state,
 		permits: { ...state.permits, [permit_id]: consumed },
+		promotion_reservations: { ...reservations, [permit_id]: finalized },
 		task_status: "promoted",
 	};
-	const s3 = await appendLedger(s2, "promotion_succeeded", { permit_id, tree_sha256 }, ctx);
+	const s3 = await appendLedger(s2, "promotion_succeeded", { permit_id, tree_sha256: reservation.tree_sha256 }, ctx);
 	return {
 		state: s3,
 		outcome: "PROMOTED",
 		effects: [
 			{
 				kind: "canonical_write",
-				repo: permit.destination_repo,
-				commit: permit.winner_candidate_sha,
-				tree_sha256,
-				base: permit.expected_destination_head,
+				repo: reservation.destination_repo,
+				commit: reservation.candidate_sha,
+				tree_sha256: reservation.tree_sha256,
+				base: reservation.expected_destination_head,
 			},
 		],
 	};
+}
+
+/**
+ * In-process promotion: reserve and finalize the same reservation before
+ * returning. The worker does not use this. It calls beginPromotion, then the
+ * container, then finalizeReservedPromotion, so a quarantine between those
+ * steps cannot un-authorize the reservation.
+ *
+ * Unknown → UNKNOWN_PERMIT. Consumed → ALREADY_CONSUMED. A head or tree that
+ * is not the permit's binding → EXPIRED_HEAD_MOVED or TREE_MISMATCH, with no
+ * reservation stored. Authority refusals abort before a reservation. On
+ * success the permit is consumed once and one canonical_write effect is
+ * returned.
+ */
+export async function attemptPromotion(
+	state: AuthorityState,
+	permit_id: string,
+	current_head: string,
+	tree_sha256: string,
+	ctx: Ctx,
+): Promise<{ state: AuthorityState; outcome: PromotionOutcome; effects: Effect[] }> {
+	const begun = await beginPromotion(state, permit_id, current_head, tree_sha256, ctx);
+	if (begun.outcome !== "RESERVED" || !begun.reservation) {
+		if (begun.outcome === "PERMIT_ID_INVALID" || begun.outcome === "WINNER_CONTENDER_NOT_FOUND" || begun.outcome === "RESERVED") {
+			return { state: begun.state, outcome: begun.outcome === "RESERVED" ? "RESERVATION_MISMATCH" : "UNKNOWN_PERMIT", effects: [] };
+		}
+		return { state: begun.state, outcome: begun.outcome, effects: [] };
+	}
+	return finalizeReservedPromotion(
+		begun.state,
+		permit_id,
+		{
+			promoted_sha: begun.reservation.candidate_sha,
+			tree_sha256: begun.reservation.tree_sha256,
+			verified_base: begun.reservation.expected_destination_head,
+			promotion_nonce: begun.reservation.promotion_nonce,
+		},
+		ctx,
+	);
 }
 
 /**
@@ -1783,6 +2018,13 @@ export async function reviewQuarantine(
 	determination: SignedDetermination,
 	ctx: Ctx,
 ): Promise<{ state: AuthorityState }> {
+	// The parameter type is a union. Stored and signed decisions are not.
+	// Accept the two canonical spellings only. Do not trim, case-fold, or alias.
+	const submitted: unknown = decision;
+	if (submitted !== "RELEASED" && submitted !== "REVOKED") {
+		throw new Error("review: decision must be exactly RELEASED or REVOKED");
+	}
+	const exactDecision = submitted;
 	const record = state.quarantine[contender_id];
 	if (!record) throw new Error(`review: no quarantine record for ${contender_id}`);
 	if (record.status !== "QUARANTINED")
@@ -1806,7 +2048,7 @@ export async function reviewQuarantine(
 		quarantineDeterminationPayload({
 			contender_id,
 			trigger: record.trigger,
-			decision,
+			decision: exactDecision,
 			note: determination.note,
 		}),
 	);
@@ -1815,7 +2057,7 @@ export async function reviewQuarantine(
 		throw new Error(
 			`review: operator determination signature invalid for ${contender_id} — refusing to act on an unsigned determination`,
 		);
-	if (decision === "RELEASED" && !recheck.passed)
+	if (exactDecision === "RELEASED" && !recheck.passed)
 		throw new Error(
 			`review: RELEASED denied — the mechanical re-check reproduced the violation ` +
 				`(trigger: ${record.trigger}; detail: ${recheck.detail}); the false-positive ` +
@@ -1823,7 +2065,7 @@ export async function reviewQuarantine(
 		);
 	const updated: QuarantineRecord = {
 		...record,
-		status: decision,
+		status: exactDecision,
 		reviewed_by: determination.keyid,
 		review_note: determination.note,
 	};
@@ -1833,7 +2075,7 @@ export async function reviewQuarantine(
 				...state.contenders,
 				[contender_id]: {
 					...contender,
-					status: decision === "RELEASED" ? ("released" as const) : ("revoked" as const),
+					status: exactDecision === "RELEASED" ? ("released" as const) : ("revoked" as const),
 				},
 			}
 		: state.contenders;
@@ -1849,7 +2091,7 @@ export async function reviewQuarantine(
 		"quarantine_reviewed",
 		{
 			contender_id,
-			decision,
+			decision: exactDecision,
 			reviewed_by_keyid: determination.keyid,
 			trigger: record.trigger,
 			recheck_passed: recheck.passed,

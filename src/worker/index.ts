@@ -33,9 +33,8 @@
  *   POST /tasks/:id/promote starts the permit's PromotionWorkflow instance
  *   (instance id = permit id, spec 5 §5) and answers 202; GET
  *   /tasks/:id/promotions/:permit_id reports it. The instance's step runs
- *   `runPromotion`, which performs the platform-owned preconditions (permit
- *   lookup, consumed check, quarantine check, permit-id recompute, evidence
- *   check) and mints five-minute repo-scoped tokens; the canonical write
+ *   `runPromotion`, which reserves the promotion in the task authority before
+ *   it mints five-minute repo-scoped tokens; the canonical write
  *   itself is container/promote.sh in the trusted promotion container, which
  *   fast-forwards the destination to the reviewed commit (spec 5 §7;
  *   specs/amendments/rebase-ancestry-v1.md). `/rebase` replays a candidate
@@ -73,15 +72,14 @@ import type {
 	EvaluationBundle,
 	PermitRecord,
 	PromotionOutcome,
+	PromotionReservation,
 	QueuePushEvent,
 	TaskRecord,
 	WorkClaim,
 } from "../lib/types.ts";
 import { SELECTOR_POLICY_VERSION } from "../lib/types.ts";
-import { authorityRefusal } from "../lib/authority-refusal.ts";
 import { buildWorkGraph } from "../lib/work-graph.ts";
 import type { Effect } from "../lib/task-state.ts";
-import { mergeArtifactAdmissionRefuses } from "../lib/merge-artifacts.ts";
 import { AGENT_ID_PATTERN, evaluationBases, resolveAgentBySecret, taskHashFor, type RebaseReport } from "../lib/task-state.ts";
 import type { PromotionResult, RebaseResult } from "../lib/git-promotion.ts";
 import { computePermitId, TaskAuthority } from "../do/TaskAuthority.ts";
@@ -1158,65 +1156,53 @@ interface PromotionAnswer {
  * an upstream that does not answer JSON) is thrown, and the step retries it.
  */
 export async function runPromotion(env: Env, taskId: string, permit_id: string): Promise<PromotionAnswer> {
-	const read = await readTaskState(env, taskId);
-	if (!read.ok) return { status: read.status, body: read.body };
-	const state = read.state;
-	const permit = Object.hasOwn(state.permits, permit_id) ? (state.permits as Record<string, PermitRecord>)[permit_id] : undefined;
-	if (!permit) return { status: 404, body: { outcome: "UNKNOWN_PERMIT" satisfies PromotionOutcome, permit_id } };
-	if (permit.consumed) {
-		return { status: 200, body: { outcome: "ALREADY_CONSUMED" satisfies PromotionOutcome, permit_id } };
-	}
-	const refusal = authorityRefusal(state, permit.contender_id, permit.winner_candidate_sha, permit_id);
-	if (refusal) {
-		return { status: 409, body: { outcome: refusal satisfies PromotionOutcome, permit_id } };
-	}
-	const contender = state.contenders[permit.contender_id];
-	if (!contender) return { status: 409, body: { error: "winner_contender_not_found", permit_id } };
-
-	const recomputed = await computePermitId({
-		task_hash: permit.task_hash,
-		baseline_commit: permit.baseline_commit,
-		winning_tree_sha256: permit.winning_tree_sha256,
-		evaluation_bundle_hash: permit.evaluation_bundle_hash,
-		selector_policy_hash: permit.selector_policy_hash,
-		expected_destination_head: permit.expected_destination_head,
-	});
-	if (recomputed !== permit_id) return { status: 409, body: { error: "permit_id_invalid", permit_id } };
-
-	const storedBundle = state.evaluations[permit.winner_candidate_sha];
-	// A missing scan or a named artifact stops before any write token is
-	// minted. A complete scan that lists no paths does not: the container
-	// reads the blobs itself. This check does not prove the evaluator's
-	// empty list is true.
-	if (mergeArtifactAdmissionRefuses(storedBundle)) {
-		return { status: 409, body: { outcome: "UNRESOLVED_CONFLICT" satisfies PromotionOutcome, permit_id } };
-	}
-	if (!storedBundle || storedBundle.bundle_hash !== permit.evaluation_bundle_hash) {
+	// beginPromotion is the authority check. Do not read state here and decide
+	// promotion from that snapshot: the reservation is the linearization point.
+	const begun = await doRpc(taskStub(env, taskId), "/promotion/begin", { body: { permit_id } });
+	if (begun.status >= 500) {
 		return {
-			status: 409,
-			body: {
-				outcome: "EVAL_BUNDLE_MISMATCH" satisfies PromotionOutcome,
-				permit_id,
-				permit_bundle_hash: permit.evaluation_bundle_hash,
-				stored_bundle_hash: storedBundle?.bundle_hash ?? null,
-			},
+			status: 502,
+			body: { error: "task_authority_failed", task_id: taskId, upstream_status: begun.status, detail: begun.body },
 		};
 	}
+	if (!begun.ok) return { status: begun.status, body: (begun.body ?? {}) as Record<string, unknown> };
+	const payload = begun.body as { outcome?: string; reservation?: PromotionReservation };
+	if (payload.outcome === "ALREADY_CONSUMED") {
+		return { status: 200, body: { outcome: "ALREADY_CONSUMED" satisfies PromotionOutcome, permit_id } };
+	}
+	const reservation = payload.reservation;
+	if (payload.outcome !== "RESERVED" || !reservation) {
+		return { status: 409, body: { ...(payload as Record<string, unknown>), permit_id } };
+	}
+	const recomputed = await computePermitId({
+		task_hash: reservation.task_hash,
+		baseline_commit: reservation.baseline_commit,
+		winning_tree_sha256: reservation.tree_sha256,
+		evaluation_bundle_hash: reservation.evaluation_bundle_hash,
+		selector_policy_hash: reservation.selector_policy_hash,
+		expected_destination_head: reservation.expected_destination_head,
+	});
+	if (recomputed !== reservation.permit_id) return { status: 409, body: { error: "permit_id_invalid", permit_id } };
+
+	// Test hook. Production Env has no barrier. It runs after the reservation
+	// is stored and before any Artifacts token or container call.
+	const barrier = (env as Env & { PROMOTION_BARRIER?: () => Promise<void> }).PROMOTION_BARRIER;
+	if (typeof barrier === "function") await barrier();
 
 	const port = productionPort(env);
-	const sourceRepo = await port.get(contender.fork_repo);
-	const candidate = await sourceRepo.readCommit(permit.winner_candidate_sha);
+	const sourceRepo = await port.get(reservation.source_repo);
+	const candidate = await sourceRepo.readCommit(reservation.candidate_sha);
 	if (candidate === null) {
 		return {
 			status: 409,
 			body: { outcome: "TREE_MISMATCH" satisfies PromotionOutcome, permit_id, detail: "candidate commit missing from contender repo" },
 		};
 	}
-	const destinationRepo = await port.get(permit.destination_repo);
+	const destinationRepo = await port.get(reservation.destination_repo);
 	// No head pre-check here: the container decides. A destination that moved
 	// on from our own earlier write still holds the candidate in its history
-	// (ALREADY_WRITTEN, so the permit can be finalized); any other move is
-	// EXPIRED_HEAD_MOVED, and the push itself is the final compare-and-swap.
+	// (ALREADY_WRITTEN, so the same reservation can be finalized); any other
+	// move is EXPIRED_HEAD_MOVED, and the push itself is the compare-and-swap.
 
 	// The only credentials with canonical write authority are minted here and
 	// live for at most five minutes. They are never persisted or logged.
@@ -1224,15 +1210,16 @@ export async function runPromotion(env: Env, taskId: string, permit_id: string):
 	const destinationToken = await destinationRepo.createToken("write", 300);
 	try {
 		const promoRes = await containerRpc(promotionStub(env, permit_id), "/run", {
-			permit_id,
+			permit_id: reservation.permit_id,
 			source_remote: sourceRepo.remote,
 			source_token: sourceToken.plaintext,
-			candidate_sha: permit.winner_candidate_sha,
+			candidate_sha: reservation.candidate_sha,
 			destination_remote: destinationRepo.remote,
 			destination_token: destinationToken.plaintext,
-			expected_destination_head: permit.expected_destination_head,
-			winning_tree_sha256: permit.winning_tree_sha256,
-			issued_at: permit.issued_at,
+			expected_destination_head: reservation.expected_destination_head,
+			winning_tree_sha256: reservation.tree_sha256,
+			issued_at: reservation.issued_at,
+			promotion_nonce: reservation.promotion_nonce,
 		});
 		const promotion = promoRes.body as Partial<PromotionResult>;
 		if (!promoRes.ok) {
@@ -1241,32 +1228,34 @@ export async function runPromotion(env: Env, taskId: string, permit_id: string):
 			// UNSUPPORTED_TREE_ENTRY, BASELINE_MISMATCH, UNRESOLVED_CONFLICT):
 			// the step does not
 			// retry those. Its 503s (not running, deadline) stay 503; anything
-			// else is a git failure, 502. The step retries both.
+			// else is a git failure, 502. The step retries both. The reservation
+			// stays IN_FLIGHT so a retry of this permit reuses the same nonce.
 			const status = promoRes.status === 409 ? 409 : promoRes.status === 503 ? 503 : 502;
 			return { status, body: { ...promotion, permit_id } };
 		}
 		if (
 			(promotion.outcome !== "PROMOTED" && promotion.outcome !== "ALREADY_WRITTEN") ||
-			promotion.promoted_sha !== permit.winner_candidate_sha ||
-			promotion.tree_sha256 !== permit.winning_tree_sha256 ||
-			promotion.base !== permit.expected_destination_head ||
+			promotion.promoted_sha !== reservation.candidate_sha ||
+			promotion.tree_sha256 !== reservation.tree_sha256 ||
+			promotion.base !== reservation.expected_destination_head ||
 			typeof promotion.parent !== "string"
 		) {
 			return { status: 502, body: { error: "promotion_container_invalid_result", permit_id, promotion } };
 		}
 
-		// Consume the permit only AFTER the canonical write is known to exist.
-		// If this RPC is lost after the Git push, retry reconciliation returns
-		// ALREADY_WRITTEN and this same finalization safely runs again.
-		// The authority consumes the permit and signs the ship record (the
-		// promotion bundle) in the same transaction (spec 1 §11).
+		// Consume the permit only AFTER the canonical write is known to match
+		// the reservation. If this RPC is lost after the Git push, retry
+		// returns the same reservation, the container reports ALREADY_WRITTEN,
+		// and this same finalization runs again. A quarantine that landed after
+		// beginPromotion does not make this reserved write unauthorized.
 		const finalized = await doRpc(taskStub(env, taskId), "/promotion/finalize", {
 			body: {
 				permit_id,
 				verified_base: promotion.base,
-				tree_sha256: permit.winning_tree_sha256,
+				tree_sha256: reservation.tree_sha256,
 				promoted_sha: promotion.promoted_sha,
 				promoted_parent: promotion.parent,
+				promotion_nonce: reservation.promotion_nonce,
 			},
 		});
 		if (!finalized.ok) {
@@ -1619,9 +1608,10 @@ export async function executeEffects(
 				// Quarantine stops the contender's pending promotions: each
 				// unconsumed permit's PromotionWorkflow instance (id = permit id)
 				// is terminated. A permit with no instance, or whose instance has
-				// already finished, has nothing to stop. A promotion that ran
-				// before the quarantine landed is refused by the authority's own
-				// quarantine check (QUARANTINED_CANDIDATE) at finalize.
+				// already finished, has nothing to stop. A reservation already taken
+				// stays authorized: finalize does not treat a later quarantine as
+				// making that reserved write unauthorized. A permit that was never
+				// reserved is refused by beginPromotion.
 				if (!promotions) {
 					console.warn(
 						`executeEffects: cancel_workflow for contender ${effect.contender_id}: no PromotionWorkflow binding`,
@@ -1793,7 +1783,8 @@ export async function queue(batch: QueueBatchLike, env: Env): Promise<void> {
 			outcome !== "APPLIED_NEW" &&
 			outcome !== "ALREADY_OBSERVED" &&
 			outcome !== "REQUIRES_RECONCILIATION" &&
-			outcome !== "REJECTED_UNKNOWN_REPO"
+			outcome !== "REJECTED_UNKNOWN_REPO" &&
+			outcome !== "REJECTED_INVALID_EVENT"
 		) {
 			throw new Error(`queue: unexpected outcome ${outcome} for task ${task_id}`);
 		}
@@ -1828,10 +1819,11 @@ export const PROMOTION_STEP_CONFIG = {
  * container/promote.sh fast-forwards the destination to the reviewed
  * candidate itself, so on a retry it finds that commit already in the
  * destination's history (even under later commits), reports ALREADY_WRITTEN,
- * and the task authority consumes the same permit. Only 5xx answers and
+ * and the task authority finalizes the same reservation. Only 5xx answers and
  * exceptions are retried; 409s (expired head, tree or baseline mismatch, a
- * refused push, an unsupported tree entry, a quarantined candidate) are
- * terminal and leave the permit unconsumed
+ * refused push, an unsupported tree entry, a quarantine that landed before
+ * the reservation) are terminal and leave the permit unconsumed. A quarantine
+ * that lands after the reservation does not make that reserved write a 409.
  * (specs/amendments/rebase-ancestry-v1.md,
  * specs/amendments/promotion-runtime-v1.md).
  */

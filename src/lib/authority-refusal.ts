@@ -5,6 +5,8 @@
  *
  * specs/amendments/exact-composition-candidate-v1.md
  * specs/amendments/quarantine-authority-epoch-v1.md
+ * specs/amendments/quarantine-decision-v1.md
+ * specs/amendments/task-composition-owner-v1.md
  */
 
 import { compositionBlocks } from "./composition-authority.ts";
@@ -33,10 +35,12 @@ function epochBlocksSha(record: QuarantineRecord, sha: string): boolean {
  * Why this SHA (and permit, if given) must not be selected, permitted, or
  * promoted. Null means this helper does not refuse it.
  *
- * QUARANTINED and REVOKED refuse the contender outright. After RELEASED, a
- * permit that existed at quarantine entry, and any SHA that was a candidate
- * then or that was submitted while quarantined, stays refused. Composition
- * then refuses every SHA except the one promotable candidate.
+ * QUARANTINED and REVOKED refuse the contender outright. Any other stored
+ * status except exact RELEASED is corrupt and refuses too: it must not fall
+ * through to promotion. After RELEASED, a permit that existed at quarantine
+ * entry, and any SHA that was a candidate then or that was submitted while
+ * quarantined, stays refused. Composition then refuses every SHA except the
+ * one promotable candidate of the composition owner.
  */
 export function authorityRefusal(
 	state: AuthorityState,
@@ -47,6 +51,8 @@ export function authorityRefusal(
 	const record = Object.hasOwn(state.quarantine, contenderId) ? state.quarantine[contenderId] : undefined;
 	if (record?.status === "QUARANTINED") return "QUARANTINED_CANDIDATE";
 	if (record?.status === "REVOKED") return "REVOKED_CANDIDATE";
+	// Legacy or corrupt JSON can store a status outside the union. Fail closed.
+	if (record && record.status !== "RELEASED") return "QUARANTINED_CANDIDATE";
 	if (record && epochBlocksPermit(record, permitId)) return "AUTHORITY_EPOCH";
 	if (record && epochBlocksSha(record, sha)) return "AUTHORITY_EPOCH";
 	if (compositionBlocks(state, contenderId, sha)) return "UNRESOLVED_CONFLICT";

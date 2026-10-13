@@ -134,7 +134,7 @@ describe("POST /promote starts one PromotionWorkflow instance per permit", () =>
 	it("a task authority that fails while the step runs is retried, not taken for a missing task", async () => {
 		const { h, X, permit } = await issuedPermit();
 		await promote(h, permit.permit_id);
-		// The authority's next /state read fails (a storage outage: its JSON 500).
+		// The authority's next reservation fails (a storage outage: its JSON 500).
 		const real = h.env.TASK_AUTHORITY;
 		let failures = 1;
 		h.env.TASK_AUTHORITY = {
@@ -143,7 +143,7 @@ describe("POST /promote starts one PromotionWorkflow instance per permit", () =>
 				const stub = real.get(id);
 				return {
 					fetch: async (request: Request) =>
-						new URL(request.url).pathname === "/state" && failures-- > 0
+						new URL(request.url).pathname === "/promotion/begin" && failures-- > 0
 							? json({ error: "authority_internal_error" }, 500)
 							: stub.fetch(request),
 				};

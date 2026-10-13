@@ -355,7 +355,35 @@ export type PromotionOutcome =
 	| "REVOKED_CANDIDATE"
 	| "AUTHORITY_EPOCH"
 	| "UNRESOLVED_CONFLICT"
-	| "UNKNOWN_PERMIT";
+	| "UNKNOWN_PERMIT"
+	| "RESERVATION_MISMATCH"
+	| "PROMOTION_IN_FLIGHT";
+
+/**
+ * The promotion linearization point (specs/amendments/promotion-reservation-v1.md).
+ * Taken inside the task authority before any canonical write. Finalize consumes
+ * this reservation; it does not re-decide authority for the reserved write.
+ */
+export interface PromotionReservation {
+	permit_id: string;
+	contender_id: string;
+	candidate_sha: string;
+	tree_sha256: string;
+	expected_destination_head: string;
+	evaluation_bundle_hash: string;
+	/** SHA-256 of the refusal-relevant authority snapshot at beginPromotion. */
+	authority_epoch: string;
+	promotion_nonce: string;
+	destination_repo: string;
+	/** Contender fork at reservation time. Token mint uses this, not a later read. */
+	source_repo: string;
+	/** Permit issued_at, so the container request does not re-read the permit. */
+	issued_at: string;
+	task_hash: string;
+	baseline_commit: string;
+	selector_policy_hash: string;
+	status: "IN_FLIGHT" | "FINALIZED";
+}
 
 /**
  * Fork-crew composition (specs/amendments/composition-result-v1.md).
@@ -519,6 +547,12 @@ export interface AuthorityState {
 	verdicts: VerdictRecord[];
 	/** Keyed by permit_id. */
 	permits: Record<string, PermitRecord>;
+	/**
+	 * In-flight and finalized promotion reservations, keyed by permit_id.
+	 * Absent until the first beginPromotion. One IN_FLIGHT reservation per task.
+	 * specs/amendments/promotion-reservation-v1.md.
+	 */
+	promotion_reservations?: Record<string, PromotionReservation>;
 	/** Keyed by contender_id. */
 	quarantine: Record<string, QuarantineRecord>;
 	/**

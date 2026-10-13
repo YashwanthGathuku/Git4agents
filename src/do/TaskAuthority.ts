@@ -25,9 +25,12 @@
  *   candidate is known to descend from); `/rebase` → `recordRebase` (the
  *   rebase container's report: REBASED/UP_TO_DATE record ancestry, CONFLICT
  *   escalates with the paths as data; specs/amendments/rebase-ancestry-v1.md);
- *   `/promotion/finalize` → `attemptPromotion` + `recordPromotionBundle`
- *   (signs the ship record with AUTHORITY_SIGNING_KEY in the same
- *   transaction). Verdict, permit, and quarantine logic lives in task-state.ts.
+ *   `/promotion/begin` → `beginPromotion` (the reservation is the
+ *   linearization point); `/promotion/finalize` → `finalizeReservedPromotion`
+ *   + `recordPromotionBundle` (signs the ship record with
+ *   AUTHORITY_SIGNING_KEY in the same transaction; it does not re-decide
+ *   authority for that reservation). Verdict, permit, and quarantine logic
+ *   lives in task-state.ts.
  *
  * Structural typing note: this class does NOT extend a real DurableObject
  * (no base class importable here; see workers.d.ts). The runtime only needs
@@ -37,10 +40,11 @@
 import {
 	AgentSecretError,
 	assignCandidateLabels,
-	attemptPromotion,
+	beginPromotion,
 	commitVerifier,
 	createAuthority,
 	enrollAgents,
+	finalizeReservedPromotion,
 	ingestQueueEvent,
 	issuePermit,
 	recordComposition,
@@ -552,10 +556,41 @@ export class TaskAuthority {
 			});
 		}
 
+		/* -- POST /promotion/begin — reserve the canonical write ----------- */
+		// The reservation is the linearization point. Tokens and the container
+		// run only after this returns RESERVED.
+		if (request.method === "POST" && path === "/promotion/begin") {
+			const parsed = await readJsonBody(request);
+			if (!parsed.ok) return parsed.response;
+			const permit_id = (parsed.body as { permit_id?: unknown }).permit_id;
+			if (typeof permit_id !== "string" || permit_id === "") return json({ error: "invalid_promotion_begin" }, 400);
+			const ctx = await productionCtx();
+			return this.doState.storage.transaction(async () => {
+				const state = await this.loadState();
+				if (state === null) return json({ error: "not_initialized" }, 404);
+				const permit = Object.hasOwn(state.permits, permit_id) ? state.permits[permit_id] : undefined;
+				const r = await beginPromotion(
+					state,
+					permit_id,
+					permit?.expected_destination_head ?? "",
+					permit?.winning_tree_sha256 ?? "",
+					ctx,
+				);
+				if (r.state !== state) await this.doState.storage.put(STATE_KEY, r.state);
+				if (r.outcome === "RESERVED") return json({ outcome: "RESERVED", reservation: r.reservation });
+				if (r.outcome === "ALREADY_CONSUMED") return json({ outcome: "ALREADY_CONSUMED", permit_id });
+				if (r.outcome === "UNKNOWN_PERMIT") return json({ outcome: "UNKNOWN_PERMIT", permit_id }, 404);
+				if (r.outcome === "PERMIT_ID_INVALID") return json({ error: "permit_id_invalid", permit_id }, 409);
+				if (r.outcome === "WINNER_CONTENDER_NOT_FOUND") {
+					return json({ error: "winner_contender_not_found", permit_id }, 409);
+				}
+				return json({ outcome: r.outcome, permit_id }, 409);
+			});
+		}
+
 		/* -- POST /promotion/finalize — consume + sign the ship record ------ */
-		// Spec 1 §11: after the canonical write, mark the permit consumed,
-		// append to the ledger and record the ship record (the authority-
-		// signed promotion bundle) in ONE storage transaction.
+		// Finalizes the reservation beginPromotion already took. A later
+		// quarantine is not applied to that reserved write.
 		if (request.method === "POST" && path === "/promotion/finalize") {
 			const parsed = await readJsonBody(request);
 			if (!parsed.ok) return parsed.response;
@@ -565,16 +600,19 @@ export class TaskAuthority {
 				tree_sha256?: string;
 				promoted_sha?: string;
 				promoted_parent?: string;
+				promotion_nonce?: string;
 			};
 			// verified_base: the permit-bound head promote.sh fast-forwarded from;
 			// promoted_parent: the promoted commit's own parent as git reported it
-			// ("" for a root commit).
+			// ("" for a root commit). promotion_nonce: the reservation fence.
 			if (
 				!body.permit_id ||
 				!body.verified_base ||
 				!body.tree_sha256 ||
 				!body.promoted_sha ||
-				typeof body.promoted_parent !== "string"
+				typeof body.promoted_parent !== "string" ||
+				typeof body.promotion_nonce !== "string" ||
+				body.promotion_nonce === ""
 			) {
 				return json({ error: "invalid_promotion_finalize" }, 400);
 			}
@@ -590,7 +628,17 @@ export class TaskAuthority {
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
-				const r = await attemptPromotion(state, body.permit_id!, body.verified_base!, body.tree_sha256!, ctx);
+				const r = await finalizeReservedPromotion(
+					state,
+					body.permit_id!,
+					{
+						promoted_sha: body.promoted_sha!,
+						tree_sha256: body.tree_sha256!,
+						verified_base: body.verified_base!,
+						promotion_nonce: body.promotion_nonce!,
+					},
+					ctx,
+				);
 				if (r.outcome !== "PROMOTED" && r.outcome !== "ALREADY_CONSUMED") {
 					if (r.state !== state) await this.doState.storage.put(STATE_KEY, r.state);
 					return json({ outcome: r.outcome, effects: r.effects }, 409);

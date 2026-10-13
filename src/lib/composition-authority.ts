@@ -3,11 +3,11 @@
  * (specs/amendments/composition-result-v1.md,
  * specs/amendments/exact-composition-candidate-v1.md).
  *
- * A task with a composition record has at most one promotable SHA:
- * composition.candidate_sha, and only while the status is COMPOSED or
- * RESOLVED, and only when that SHA is not a crew contribution. Every other
- * SHA is refused, including an older accepted SHA, a republish, and a member
- * SHA that contributing_shas omitted.
+ * A task has one composition record (specs/amendments/task-composition-owner-v1.md).
+ * Once it exists, only composition.contender_id is promotable. That owner has
+ * at most one promotable SHA: composition.candidate_sha, and only while the
+ * status is COMPOSED or RESOLVED, and only when that SHA is not a crew
+ * contribution. Every other SHA, and every other contender, is refused.
  */
 
 import type { AuthorityState, CompositionRecord } from "./types.ts";
@@ -59,13 +59,16 @@ export function promotableCompositionSha(composition: CompositionRecord | null |
 }
 
 /**
- * True when this contender's composition record forbids `sha`.
- * No record for this contender → false. A promotable record forbids every
- * SHA except that exact candidate. Every other status forbids every SHA.
+ * True when this task's composition record forbids `sha` for this contender.
+ * No composition record → false. A record owned by someone else forbids every
+ * SHA, including the owner's candidate. The owner's promotable record forbids
+ * every SHA except that exact candidate. Every other owner status forbids
+ * every SHA.
  */
 export function compositionBlocks(state: AuthorityState, contenderId: string, sha?: string): boolean {
 	const composition = state.composition;
-	if (!composition || composition.contender_id !== contenderId) return false;
+	if (!composition) return false;
+	if (composition.contender_id !== contenderId) return true;
 	const promotable = promotableCompositionSha(composition);
 	if (promotable === null) return true;
 	return sha !== promotable;
@@ -75,8 +78,13 @@ export function compositionBlocks(state: AuthorityState, contenderId: string, sh
 export function compositionEvidenceError(state: AuthorityState, contenderId: string, sha: string): string | null {
 	if (!compositionBlocks(state, contenderId, sha)) return null;
 	const composition = state.composition;
-	const promotable =
-		composition && composition.contender_id === contenderId ? promotableCompositionSha(composition) : null;
+	if (!composition || composition.contender_id !== contenderId) {
+		return (
+			`evaluation rejected: contender ${contenderId} is not the composition owner ` +
+			`${composition?.contender_id ?? "unknown"}`
+		);
+	}
+	const promotable = promotableCompositionSha(composition);
 	if (promotable === null) {
 		const status = composition?.status;
 		if (status === "COMPOSED" || status === "RESOLVED") {

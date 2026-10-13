@@ -13,11 +13,14 @@ import { promotableCompositionSha } from "../src/lib/composition-authority.ts";
 import { createEd25519Signer } from "../src/lib/signer-node.ts";
 import {
 	attemptPromotion,
+	beginPromotion,
 	createAuthority,
+	finalizeReservedPromotion,
 	ingestQueueEvent,
 	issuePermit,
 	quarantineContender,
 	recordComposition,
+	registerContender,
 	registerOperatorKeys,
 	reviewQuarantine,
 	runVerdictSeam,
@@ -182,16 +185,34 @@ function push(before: string, after: string, repo = "fork-1"): QueuePushEvent {
 }
 
 function authorityEnv(state: AuthorityState, touched: { artifacts: number; container: number }) {
+	const ctx = makeCtx();
 	return {
 		TASK_AUTHORITY: {
 			idFromName: (name: string) => ({ toString: () => name }),
 			get: () => ({
 				fetch: async (request: Request) => {
 					const url = new URL(request.url);
-					assert.equal(url.pathname, "/state");
-					assert.equal(request.method, "GET");
-					return new Response(JSON.stringify(state), {
-						status: 200,
+					assert.equal(url.pathname, "/promotion/begin");
+					assert.equal(request.method, "POST");
+					const body = (await request.json()) as { permit_id?: string };
+					const permitId = body.permit_id ?? "";
+					const permit = Object.hasOwn(state.permits, permitId) ? state.permits[permitId] : undefined;
+					const result = await beginPromotion(
+						state,
+						permitId,
+						permit?.expected_destination_head ?? "",
+						permit?.winning_tree_sha256 ?? "",
+						ctx,
+					);
+					if (result.outcome === "RESERVED") {
+						return new Response(JSON.stringify({ outcome: "RESERVED", reservation: result.reservation }), {
+							status: 200,
+							headers: { "content-type": "application/json" },
+						});
+					}
+					const status = result.outcome === "UNKNOWN_PERMIT" ? 404 : result.outcome === "ALREADY_CONSUMED" ? 200 : 409;
+					return new Response(JSON.stringify({ outcome: result.outcome, permit_id: permitId }), {
+						status,
 						headers: { "content-type": "application/json" },
 					});
 				},
@@ -679,7 +700,7 @@ describe("P1-1 causal queue tip", () => {
 	});
 
 	it("the queue consumer acknowledges a reconciliation and does not throw", async () => {
-		for (const outcome of ["ACK_DUP", "APPLIED_NEW", "ALREADY_OBSERVED", "REQUIRES_RECONCILIATION", "REJECTED_UNKNOWN_REPO"]) {
+		for (const outcome of ["ACK_DUP", "APPLIED_NEW", "ALREADY_OBSERVED", "REQUIRES_RECONCILIATION", "REJECTED_UNKNOWN_REPO", "REJECTED_INVALID_EVENT"]) {
 			await worker.queue(
 				{
 					messages: [
@@ -727,5 +748,348 @@ describe("P1-1 causal queue tip", () => {
 			),
 			/unexpected outcome/,
 		);
+	});
+});
+
+describe("P0-A runtime quarantine decision", () => {
+	const malformed = ["released", "revoked", "REVOKED ", "APPROVED", "", null, undefined, { status: "REVOKED" }, 1];
+
+	async function quarantinedPermit(ctx: Ctx): Promise<{ state: AuthorityState; permit: PermitRecord }> {
+		let state = await accepted(ctx, OLD);
+		const issued = await issuePermit(state, OLD, "acme/api", BASELINE, ctx);
+		assert.equal(issued.outcome, "ISSUED");
+		assert.ok(issued.permit);
+		state = (await quarantineContender(issued.state, "contender-1", "tool_status_fabrication", "ev-1", ctx)).state;
+		return { state, permit: issued.permit };
+	}
+
+	it("rejects every decision that is not exactly RELEASED or REVOKED before mutation", async () => {
+		const ctx = makeCtx();
+		const signer = createEd25519Signer();
+		const { state: quarantined } = await quarantinedPermit(ctx);
+		const registered = await registerOperatorKeys(quarantined, [{ public_key_der_hex: signer.publicKeyDerHex }], ctx);
+		const recheck = {
+			trigger: "tool_status_fabrication" as const,
+			passed: false,
+			detail: "re-run reproduces the finding",
+			checked_at: "2026-10-12T12:00:00.000Z",
+		};
+		for (const decision of malformed) {
+			const note = `signed ${JSON.stringify(decision)}`;
+			const payload = new TextEncoder().encode(
+				quarantineDeterminationPayload({
+					contender_id: "contender-1",
+					trigger: "tool_status_fabrication",
+					decision: decision as "RELEASED",
+					note,
+				}),
+			);
+			const sig = await signer.sign(payload);
+			const before = JSON.stringify(registered);
+			await assert.rejects(
+				reviewQuarantine(registered, "contender-1", decision as "RELEASED", recheck, {
+					note,
+					keyid: signer.keyid,
+					signature: sig.signature,
+				}, ctx),
+				/exactly RELEASED or REVOKED/,
+			);
+			assert.equal(JSON.stringify(registered), before);
+			assert.equal(registered.quarantine["contender-1"].status, "QUARANTINED");
+		}
+	});
+
+	it("a stored status outside QUARANTINED, REVOKED, and RELEASED cannot promote", async () => {
+		const ctx = makeCtx();
+		const { state, permit } = await quarantinedPermit(ctx);
+		for (const status of malformed) {
+			const corrupt: AuthorityState = {
+				...state,
+				quarantine: {
+					...state.quarantine,
+					"contender-1": { ...state.quarantine["contender-1"], status: status as never },
+				},
+			};
+			assert.equal(authorityRefusal(corrupt, "contender-1", OLD, permit.permit_id), "QUARANTINED_CANDIDATE");
+			const promoted = await attemptPromotion(corrupt, permit.permit_id, BASELINE, permit.winning_tree_sha256, ctx);
+			assert.equal(promoted.outcome, "QUARANTINED_CANDIDATE");
+			noCanonicalWrite(promoted.effects);
+			assert.equal(promoted.state.permits[permit.permit_id].consumed, false);
+			await expectRunPromotionRefusal(corrupt, permit.permit_id, "QUARANTINED_CANDIDATE");
+		}
+	});
+});
+
+describe("P0-B composition owner is task-wide", () => {
+	it("contender 2 cannot promote a member SHA, the old SHA, an arbitrary SHA, or the candidate", async () => {
+		const ctx = makeCtx();
+		const shas = [SIDE_A, OLD, "arbitrary-different-sha", CANDIDATE];
+		let state = observed(OLD);
+		const registered = await registerContender(
+			state,
+			{
+				contender_id: "contender-2",
+				agent_id: "agent-2",
+				fork_repo: "fork-2",
+				fork_lineage: { parent_repo: "acme/api", parent_commit: BASELINE },
+				fork_base: BASELINE,
+				token_id: "tok-2",
+				status: "forked",
+				claim_work_id: null,
+				latest_commit: null,
+			},
+			ctx,
+		);
+		assert.equal(registered.created, true);
+		state = registered.state;
+		const permits: PermitRecord[] = [];
+		for (const sha of shas) {
+			state = {
+				...state,
+				contenders: {
+					...state.contenders,
+					"contender-2": { ...state.contenders["contender-2"], latest_commit: sha },
+				},
+			};
+			state = (
+				await submitEvaluation(
+					state,
+					await makeBundle({ candidate_sha: sha, tree_sha256: `tree-${sha}`, contender_id: "contender-2" }),
+					{ zone: "evaluation_domain" },
+					ctx,
+				)
+			).state;
+			const seam = await runVerdictSeam(
+				state,
+				[{ contender_id: "contender-2", candidate_sha: sha, blast_radius: 1, change_surface: 1 }],
+				ctx,
+			);
+			assert.equal(seam.record.state, "ACCEPT", sha);
+			state = seam.state;
+			const issued = await issuePermit(state, sha, "acme/api", BASELINE, ctx);
+			assert.equal(issued.outcome, "ISSUED", sha);
+			assert.ok(issued.permit);
+			permits.push(issued.permit);
+			state = issued.state;
+		}
+		state = await recordComposition(state, composition({ candidate_sha: CANDIDATE }), ctx);
+		assert.equal(authorityRefusal(state, "contender-1", CANDIDATE), null);
+		const refusedPermit = await issuePermit(state, CANDIDATE, "acme/api", BASELINE, ctx);
+		assert.equal(refusedPermit.outcome, "UNRESOLVED_CONFLICT");
+		assert.equal(refusedPermit.permit, null);
+		for (const [index, sha] of shas.entries()) {
+			const tipped: AuthorityState = {
+				...state,
+				contenders: {
+					...state.contenders,
+					"contender-2": { ...state.contenders["contender-2"], latest_commit: sha },
+				},
+			};
+			await assert.rejects(
+				submitEvaluation(
+					tipped,
+					await makeBundle({
+						candidate_sha: sha,
+						tree_sha256: `tree-again-${sha}`,
+						contender_id: "contender-2",
+						evaluated_at: "2026-10-12T13:00:00Z",
+					}),
+					{ zone: "evaluation_domain" },
+					ctx,
+				),
+				/not the composition owner contender-1/,
+			);
+			const seam = await runVerdictSeam(
+				tipped,
+				[{ contender_id: "contender-2", candidate_sha: sha, blast_radius: 1, change_surface: 1 }],
+				ctx,
+			);
+			assert.equal(seam.record.state, "REJECT");
+			assert.equal(seam.record.winner_sha, null);
+			assert.match(seam.record.reasons.join("\n"), /UNRESOLVED_CONFLICT/);
+			assert.equal(authorityRefusal(tipped, "contender-2", sha), "UNRESOLVED_CONFLICT");
+			const permit = permits[index];
+			const promoted = await attemptPromotion(tipped, permit.permit_id, BASELINE, permit.winning_tree_sha256, ctx);
+			assert.equal(promoted.outcome, "UNRESOLVED_CONFLICT");
+			noCanonicalWrite(promoted.effects);
+			assert.equal(promoted.state.permits[permit.permit_id].consumed, false);
+			await expectRunPromotionRefusal(tipped, permit.permit_id, "UNRESOLVED_CONFLICT");
+		}
+	});
+});
+
+describe("P0-C promotion reservation", () => {
+	async function permitted(ctx: Ctx): Promise<{ state: AuthorityState; permit: PermitRecord }> {
+		let state = await accepted(ctx, OLD);
+		const issued = await issuePermit(state, OLD, "acme/api", BASELINE, ctx);
+		assert.equal(issued.outcome, "ISSUED");
+		assert.ok(issued.permit);
+		return { state: issued.state, permit: issued.permit };
+	}
+
+	it("quarantine before beginPromotion stores no reservation and writes nothing", async () => {
+		const ctx = makeCtx();
+		const { state: permittedState, permit } = await permitted(ctx);
+		const quarantined = (await quarantineContender(permittedState, "contender-1", "tool_status_fabrication", "ev-1", ctx)).state;
+		const begun = await beginPromotion(quarantined, permit.permit_id, BASELINE, permit.winning_tree_sha256, ctx);
+		assert.equal(begun.outcome, "QUARANTINED_CANDIDATE");
+		assert.equal(begun.reservation, undefined);
+		assert.equal(begun.state.promotion_reservations, undefined);
+		const promoted = await attemptPromotion(quarantined, permit.permit_id, BASELINE, permit.winning_tree_sha256, ctx);
+		assert.equal(promoted.outcome, "QUARANTINED_CANDIDATE");
+		noCanonicalWrite(promoted.effects);
+		assert.equal(promoted.state.permits[permit.permit_id].consumed, false);
+	});
+
+	it("quarantine after beginPromotion does not un-authorize that reservation", async () => {
+		const ctx = makeCtx();
+		const { state: permittedState, permit } = await permitted(ctx);
+		const begun = await beginPromotion(permittedState, permit.permit_id, BASELINE, permit.winning_tree_sha256, ctx);
+		assert.equal(begun.outcome, "RESERVED");
+		assert.ok(begun.reservation);
+		assert.equal(begun.state.promotion_reservations?.[permit.permit_id].status, "IN_FLIGHT");
+		const quarantined = (
+			await quarantineContender(begun.state, "contender-1", "tool_status_fabrication", "ev-1", ctx)
+		).state;
+		assert.equal(quarantined.quarantine["contender-1"].status, "QUARANTINED");
+		const again = await beginPromotion(quarantined, permit.permit_id, BASELINE, permit.winning_tree_sha256, ctx);
+		assert.equal(again.outcome, "RESERVED");
+		assert.equal(again.reservation?.promotion_nonce, begun.reservation.promotion_nonce);
+		assert.equal(again.state.ledger.length, quarantined.ledger.length);
+		const finalized = await finalizeReservedPromotion(
+			quarantined,
+			permit.permit_id,
+			{
+				promoted_sha: begun.reservation.candidate_sha,
+				tree_sha256: begun.reservation.tree_sha256,
+				verified_base: begun.reservation.expected_destination_head,
+				promotion_nonce: begun.reservation.promotion_nonce,
+			},
+			ctx,
+		);
+		assert.equal(finalized.outcome, "PROMOTED");
+		assert.equal(finalized.effects.filter((effect) => effect.kind === "canonical_write").length, 1);
+		assert.equal(finalized.state.permits[permit.permit_id].consumed, true);
+		assert.equal(finalized.state.promotion_reservations?.[permit.permit_id].status, "FINALIZED");
+		assert.equal(finalized.state.quarantine["contender-1"].status, "QUARANTINED");
+		assert.equal(authorityRefusal(finalized.state, "contender-1", FRESH), "QUARANTINED_CANDIDATE");
+		const replay = await finalizeReservedPromotion(
+			finalized.state,
+			permit.permit_id,
+			{
+				promoted_sha: begun.reservation.candidate_sha,
+				tree_sha256: begun.reservation.tree_sha256,
+				verified_base: begun.reservation.expected_destination_head,
+				promotion_nonce: begun.reservation.promotion_nonce,
+			},
+			ctx,
+		);
+		assert.equal(replay.outcome, "ALREADY_CONSUMED");
+		assert.equal(replay.effects.length, 0);
+		assert.equal(replay.state.ledger.length, finalized.state.ledger.length);
+	});
+
+	it("a lost finalize retries the same reservation and does not consume twice", async () => {
+		const ctx = makeCtx();
+		const { state, permit } = await permitted(ctx);
+		const begun = await beginPromotion(state, permit.permit_id, BASELINE, permit.winning_tree_sha256, ctx);
+		assert.ok(begun.reservation);
+		const proof = {
+			promoted_sha: begun.reservation.candidate_sha,
+			tree_sha256: begun.reservation.tree_sha256,
+			verified_base: begun.reservation.expected_destination_head,
+			promotion_nonce: begun.reservation.promotion_nonce,
+		};
+		const mismatch = await finalizeReservedPromotion(
+			begun.state,
+			permit.permit_id,
+			{ ...proof, promoted_sha: "not-the-reservation" },
+			ctx,
+		);
+		assert.equal(mismatch.outcome, "RESERVATION_MISMATCH");
+		assert.equal(mismatch.state.permits[permit.permit_id].consumed, false);
+		assert.equal(mismatch.state.promotion_reservations?.[permit.permit_id].status, "IN_FLIGHT");
+		const finalized = await finalizeReservedPromotion(begun.state, permit.permit_id, proof, ctx);
+		assert.equal(finalized.outcome, "PROMOTED");
+		const retry = await finalizeReservedPromotion(finalized.state, permit.permit_id, proof, ctx);
+		assert.equal(retry.outcome, "ALREADY_CONSUMED");
+		assert.equal(retry.effects.length, 0);
+		assert.equal(
+			retry.state.ledger.filter((entry) => entry.kind === "promotion_succeeded").length,
+			1,
+		);
+	});
+
+	it("a second permit cannot open another reservation while one is in flight", async () => {
+		const ctx = makeCtx();
+		let state = await accepted(ctx, OLD);
+		const first = await issuePermit(state, OLD, "acme/api", BASELINE, ctx);
+		assert.equal(first.outcome, "ISSUED");
+		assert.ok(first.permit);
+		state = (
+			await submitEvaluation(
+				atTip(first.state, FRESH),
+				await makeBundle({ candidate_sha: FRESH, tree_sha256: "tree-fresh" }),
+				{ zone: "evaluation_domain" },
+				ctx,
+			)
+		).state;
+		const seam = await runVerdictSeam(
+			state,
+			[{ contender_id: "contender-1", candidate_sha: FRESH, blast_radius: 1, change_surface: 1 }],
+			ctx,
+		);
+		assert.equal(seam.record.state, "ACCEPT");
+		const second = await issuePermit(seam.state, FRESH, "acme/api", BASELINE, ctx);
+		assert.equal(second.outcome, "ISSUED");
+		assert.ok(second.permit);
+		const begun = await beginPromotion(second.state, first.permit.permit_id, BASELINE, first.permit.winning_tree_sha256, ctx);
+		assert.equal(begun.outcome, "RESERVED");
+		const blocked = await beginPromotion(
+			begun.state,
+			second.permit.permit_id,
+			BASELINE,
+			second.permit.winning_tree_sha256,
+			ctx,
+		);
+		assert.equal(blocked.outcome, "PROMOTION_IN_FLIGHT");
+		assert.equal(blocked.state.promotion_reservations?.[second.permit.permit_id], undefined);
+		assert.equal(blocked.state.permits[second.permit.permit_id].consumed, false);
+	});
+});
+
+describe("P1-D empty push tip", () => {
+	it("an empty after does not clear the tip, and a stale base push does not become current", async () => {
+		const ctx = makeCtx();
+		const state = observed("sha-c");
+		const cleared = await ingestQueueEvent(state, push("sha-c", ""), ctx);
+		assert.equal(cleared.outcome, "REJECTED_INVALID_EVENT");
+		assert.equal(cleared.state.contenders["contender-1"].latest_commit, "sha-c");
+		assert.equal(cleared.state.ledger.at(-1)?.kind, "queue_event_rejected_invalid");
+		const stale = await ingestQueueEvent(cleared.state, push(BASELINE, "sha-b"), ctx);
+		assert.notEqual(stale.outcome, "APPLIED_NEW");
+		assert.equal(stale.outcome, "REQUIRES_RECONCILIATION");
+		assert.equal(stale.state.contenders["contender-1"].latest_commit, "sha-c");
+		const dup = await ingestQueueEvent(stale.state, push("sha-c", ""), ctx);
+		assert.equal(dup.outcome, "ACK_DUP");
+		assert.equal(dup.state, stale.state);
+		const forward = await ingestQueueEvent(stale.state, push("sha-c", "sha-d"), ctx);
+		assert.equal(forward.outcome, "APPLIED_NEW");
+		assert.equal(forward.state.contenders["contender-1"].latest_commit, "sha-d");
+	});
+
+	it("whitespace-only and zero object ids are not stored as the tip", async () => {
+		const ctx = makeCtx();
+		const state = observed("sha-c");
+		for (const after of [" ", "\n", "\t", " \t", "0".repeat(40), "0".repeat(64)]) {
+			const rejected = await ingestQueueEvent(state, push("sha-c", after), ctx);
+			assert.equal(rejected.outcome, "REJECTED_INVALID_EVENT", JSON.stringify(after));
+			assert.equal(rejected.state.contenders["contender-1"].latest_commit, "sha-c");
+		}
+		for (const after of [null, undefined, 0, { sha: "" }]) {
+			const rejected = await ingestQueueEvent(state, { ...push("sha-c", "sha-d"), after } as unknown as QueuePushEvent, ctx);
+			assert.equal(rejected.outcome, "REJECTED_INVALID_EVENT");
+			assert.equal(rejected.state.contenders["contender-1"].latest_commit, "sha-c");
+		}
 	});
 });

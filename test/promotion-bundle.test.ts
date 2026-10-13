@@ -190,6 +190,9 @@ describe("TaskAuthority signs the ship record at /promotion/finalize", () => {
 		});
 		fx.pinnedKeyDerHex = parseTrustedKey(key.publicKey.export({ type: "spki", format: "pem" }).toString());
 		fx.permitId = permit.permit_id;
+		const begun = await rpc(fx.withKey, "POST", "/promotion/begin", { permit_id: permit.permit_id });
+		assert.equal(begun.status, 200, JSON.stringify(begun.body));
+		assert.equal(begun.body.outcome, "RESERVED");
 		fx.finalize = {
 			permit_id: permit.permit_id,
 			verified_base: HEAD,
@@ -197,6 +200,7 @@ describe("TaskAuthority signs the ship record at /promotion/finalize", () => {
 			promoted_sha: CANDIDATE,
 			// The rebased candidate's own parent is HEAD.
 			promoted_parent: HEAD,
+			promotion_nonce: begun.body.reservation.promotion_nonce,
 		};
 		fx.env = {
 			TASK_AUTHORITY: { idFromName: (n: string) => ({ toString: () => n }), get: () => fx.withKey },
@@ -226,16 +230,16 @@ describe("TaskAuthority signs the ship record at /promotion/finalize", () => {
 		assert.equal((await getBundle(TOKENS.control)).status, 404);
 	});
 
-	it("a promoted commit other than the permit's candidate is refused: nothing is consumed or signed", async () => {
-		// Promotion fast-forwards to the reviewed commit itself
-		// (rebase-ancestry-v1), so any other promoted SHA is a substitution.
+	it("a promoted commit other than the reservation is refused: nothing is consumed or signed", async () => {
+		// The container result has to be the reserved candidate. A different
+		// SHA fails closed and leaves the permit unconsumed.
 		const res = await rpc(fx.withKey, "POST", "/promotion/finalize", { ...fx.finalize, promoted_sha: "5ub5717u7ed00000000000000000000000000005" });
-		assert.equal(res.status, 500);
-		assert.equal(res.body.error, "promotion_bundle_failed");
-		assert.match(res.body.detail, /is not permit .*'s candidate/);
+		assert.equal(res.status, 409);
+		assert.equal(res.body.outcome, "RESERVATION_MISMATCH");
 		const state = (await rpc(fx.withKey, "GET", "/state")).body as AuthorityState;
 		assert.equal(state.permits[fx.permitId].consumed, false);
 		assert.equal(state.promotion_bundles, undefined);
+		assert.equal(state.promotion_reservations?.[fx.permitId].status, "IN_FLIGHT");
 	});
 
 	it("consumes, ledgers and signs in one step; GET /tasks/:id/bundle serves it; it verifies against the pinned key", async () => {
