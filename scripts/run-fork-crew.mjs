@@ -36,6 +36,7 @@ import {
 	loadForkCrew,
 	resolveComposition,
 	runCrewOnFork,
+	useToolStatusSession,
 } from "./lib/fork-crew.mjs";
 
 const baseUrl = process.env.MADGRIX_BASE_URL?.replace(/\/$/, "");
@@ -280,6 +281,14 @@ try {
 		/** @type {{ claim_work_id?: string }} */ (sub).claim_work_id = claimed.work_id;
 		console.error(`[Git4agents] ${sub.id} (${sub.role}) claimed ${sub.paths.join(", ")} on ${forkRepo}`);
 	}
+	useToolStatusSession({
+		task_id: taskId,
+		contender_id: contenderId,
+		agent_id: crew.parent.id,
+		baseline_commit: task.baseline_commit,
+		model: "none",
+		harness: "madgrix-fork-crew/0.1.0",
+	});
 	const crewRun = await runCrewOnFork(dir, crew);
 	/** @type {string | null} */
 	let candidateSha = crewRun.sha;

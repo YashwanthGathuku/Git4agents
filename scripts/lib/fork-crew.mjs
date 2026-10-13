@@ -54,6 +54,38 @@ export function fleetConfigForCrew(crewConfig = DEFAULT_FORK_CREW_CONFIG) {
 const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const RECORD_PATH = ".madgrix/subagent-intents.json";
 const CONFLICT_PATH = ".madgrix/conflict.json";
+const TOOL_STATUS_PATH = ".madgrix/tool-status.jsonl";
+
+/**
+ * Session record for the crew's tool-status log (tool-status-v1): the
+ * parent contender's task, contender, agent and baseline ids. Null leaves
+ * the tree's log alone (tests that do not exercise provenance).
+ * @type {{ task_id: string, contender_id: string, agent_id: string, baseline_commit: string, model: string, harness: string } | null}
+ */
+let toolStatusSession = null;
+
+/**
+ * Set (or clear) the session record every composed/resolved commit writes.
+ * @param {typeof toolStatusSession} session
+ */
+export function useToolStatusSession(session) {
+	toolStatusSession = session;
+}
+
+/**
+ * Line 1 the session, then one OK receipt per sub-agent commit (a sub-agent
+ * whose command failed never reaches composition).
+ * @param {NonNullable<typeof toolStatusSession>} session
+ * @param {Array<{ id: string }>} commits
+ * @returns {string}
+ */
+export function toolStatusLog(session, commits) {
+	const lines = [JSON.stringify({ format: "madgrix-tool-status/v1", ...session })];
+	commits.forEach((commit, i) => {
+		lines.push(JSON.stringify({ seq: i + 1, action: `sub_agent:${commit.id}`, tool_status: "OK" }));
+	});
+	return `${lines.join("\n")}\n`;
+}
 
 /**
  * @param {string} glob
@@ -471,6 +503,12 @@ function commitIndex(repo, baseline, commits, record, message) {
 	mkdirSync(path.join(repo, ".madgrix"), { recursive: true });
 	writeFileSync(path.join(repo, RECORD_PATH), `${JSON.stringify(record, null, 2)}\n`);
 	git(repo, ["add", "--", RECORD_PATH]);
+	if (toolStatusSession) {
+		// A fresh log for THIS run replaces any log inherited from the baseline
+		// (specs/amendments/tool-status-v1.md: a leftover log fails binding).
+		writeFileSync(path.join(repo, TOOL_STATUS_PATH), toolStatusLog(toolStatusSession, commits));
+		git(repo, ["add", "--", TOOL_STATUS_PATH]);
+	}
 	const tree = git(repo, ["write-tree"]).stdout.trim();
 	const parentArgs = ["-p", baseline, ...commits.flatMap((commit) => ["-p", commit.sha])];
 	const sha = git(repo, ["commit-tree", tree, ...parentArgs, "-m", message]).stdout.trim();
