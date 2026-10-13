@@ -932,7 +932,13 @@ export async function handleTaskContext(env: Env, taskId: string, request: Reque
  * include agent secrets.
  */
 export async function handleWorkGraph(env: Env, taskId: string, request: Request): Promise<Response> {
-	if (!(await requireAgentOrControl(request, env))) return json({ error: "task_context_auth_required" }, 401);
+	// One operator-configured demo task may be viewed read-only without a
+	// token; the WorkGraph carries no agent secrets or tokens.
+	const publicDemo =
+		typeof env.MADGRIX_PUBLIC_DEMO_TASK_ID === "string" &&
+		env.MADGRIX_PUBLIC_DEMO_TASK_ID.length > 0 &&
+		taskId === env.MADGRIX_PUBLIC_DEMO_TASK_ID;
+	if (!publicDemo && !(await requireAgentOrControl(request, env))) return json({ error: "task_context_auth_required" }, 401);
 	const read = await readTaskState(env, taskId);
 	if (!read.ok) return json(read.body, read.status);
 	const graph = buildWorkGraph(read.state);
@@ -1676,10 +1682,49 @@ export async function fetch(request: Request, env: Env): Promise<Response> {
 	}
 }
 
+const REPO_URL = "https://github.com/YashwanthGathuku/Madgrix";
+
+function escapeHtml(text: string): string {
+	return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+}
+
+/** GET / — what this Worker is and which routes a visitor can open. */
+function landingPage(env: Env): Response {
+	const demo = typeof env.MADGRIX_PUBLIC_DEMO_TASK_ID === "string" && env.MADGRIX_PUBLIC_DEMO_TASK_ID.length > 0
+		? encodeURIComponent(env.MADGRIX_PUBLIC_DEMO_TASK_ID)
+		: null;
+	const demoLinks = demo
+		? `<li><a href="/tasks/${demo}/graph">Demo task work graph</a> (read-only)</li>
+<li><a href="/tasks/${demo}/ledger">Demo task ledger</a> (JSON)</li>`
+		: `<li>No public demo task is configured (<code>MADGRIX_PUBLIC_DEMO_TASK_ID</code>).</li>`;
+	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Git4agents (madgrix Worker)</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:3rem auto;padding:0 1rem;color:#111}code{background:#f2f2f2;padding:0 .25rem}</style>
+</head><body>
+<h1>Git4agents</h1>
+<p>A governed promotion protocol for autonomous software agents, running on Cloudflare Workers, Durable Objects, Queues, Workflows, Containers and Artifacts. This Worker is <code>madgrix</code>.</p>
+<p>Agents compete on one frozen task in isolated Artifact repositories. Evidence comes from a separate evaluation domain, blind verifiers sign reports, and a single-use exact-state permit lets only the reviewed commit reach canonical history. Every promotion ships a signed bundle you can verify offline.</p>
+<h2>Open without a token</h2>
+<ul>
+<li><a href="/health"><code>GET /health</code></a> — liveness</li>
+<li><code>GET /tasks/:id/ledger</code> — a task's hash-chained ledger</li>
+<li><code>GET /tasks/:id/attestation/:permit_id/verify</code> — permit attestation check</li>
+${demoLinks}
+</ul>
+<p>All other routes need a service token; see the API table in the <a href="${escapeHtml(REPO_URL)}">repository README</a>.</p>
+</body></html>`;
+	return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
 async function route(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
 	const parts = url.pathname.split("/").filter((p) => p !== "");
 
+	// GET / — public landing page; GET /health — liveness.
+	if (request.method === "GET" && parts.length === 0) return landingPage(env);
+	if (request.method === "GET" && parts.length === 1 && parts[0] === "health") {
+		return json({ ok: true, service: "madgrix", protocol: "git4agents" }, 200);
+	}
 	// POST /tasks
 	if (request.method === "POST" && parts.length === 1 && parts[0] === "tasks") {
 		return handleCreateTask(env, request);

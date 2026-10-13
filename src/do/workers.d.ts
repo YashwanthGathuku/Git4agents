@@ -113,6 +113,8 @@ interface Env {
 	PROMOTION_CONTAINER: DoNamespace;
 	/** The PromotionWorkflow binding: one instance per permit, id = permit_id. */
 	PROMOTION_WORKFLOW: WorkflowBindingLike;
+	/** Optional: one task id whose work-graph page is readable without a token (demo). */
+	MADGRIX_PUBLIC_DEMO_TASK_ID?: string;
 }
 
 /** Queue consumer batch shape (structural; mirrors MessageBatch). */
