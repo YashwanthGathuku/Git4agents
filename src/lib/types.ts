@@ -357,7 +357,8 @@ export type PromotionOutcome =
 	| "UNRESOLVED_CONFLICT"
 	| "UNKNOWN_PERMIT"
 	| "RESERVATION_MISMATCH"
-	| "PROMOTION_IN_FLIGHT";
+	| "PROMOTION_IN_FLIGHT"
+	| "TASK_ALREADY_PROMOTED";
 
 /**
  * The promotion linearization point (specs/amendments/promotion-reservation-v1.md).

@@ -10,6 +10,7 @@ import { createCommitment } from "../src/lib/verifiers.ts";
 import {
 	appendLedger,
 	attemptPromotion,
+	beginPromotion,
 	commitVerifier,
 	createAuthority,
 	defaultCtx,
@@ -646,6 +647,35 @@ describe("escalation", () => {
 			issuePermit(state, "csha1", "acme/api", BASELINE, ctx),
 			/BLOCKED/,
 		);
+	});
+});
+
+describe("a promoted task is terminal", () => {
+	it("refuses a new verdict, a new permit, and a different permit's promotion", async () => {
+		const ctx = makeCtx();
+		const bundle = await makeBundle();
+		const state = await authorityWithAccept(ctx, bundle);
+		const { state: s2, permit } = await issuePermit(state, "csha1", "acme/api", BASELINE, ctx);
+		assert.ok(permit);
+		const r1 = await attemptPromotion(s2, permit.permit_id, BASELINE, "tree1", ctx);
+		assert.equal(r1.state.task_status, "promoted");
+		await assert.rejects(
+			runVerdictSeam(
+				r1.state,
+				[{ contender_id: bundle.contender_id, candidate_sha: bundle.candidate_sha, blast_radius: 1, change_surface: 1 }],
+				ctx,
+			),
+			/already promoted/,
+		);
+		// A different selector policy hash yields a NEW permit id at the same head.
+		const ctx2 = { ...ctx, selectorPolicyHash: "other-policy" };
+		await assert.rejects(issuePermit(r1.state, "csha1", "acme/api", BASELINE, ctx2), /already promoted/);
+		const replay = await issuePermit(r1.state, "csha1", "acme/api", BASELINE, ctx);
+		assert.equal(replay.permit?.consumed, true, "the stored record is still returned on retry");
+		const other = { ...permit, permit_id: "f".repeat(64), consumed: false, consumed_at: null };
+		const forged = { ...r1.state, permits: { ...r1.state.permits, [other.permit_id]: other } };
+		const begun = await beginPromotion(forged, other.permit_id, BASELINE, "tree1", ctx);
+		assert.equal(begun.outcome, "TASK_ALREADY_PROMOTED");
 	});
 });
 

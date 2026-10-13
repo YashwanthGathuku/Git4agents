@@ -1100,6 +1100,8 @@ export async function runVerdictSeam(
 	candidates: CandidateEvidence[],
 	ctx: Ctx,
 ): Promise<{ state: AuthorityState; record: VerdictRecord }> {
+	if (state.task_status === "promoted")
+		throw new Error("runVerdictSeam: task already promoted — a task ships once; create a new task");
 	const excluded: string[] = [];
 	const admissible: CandidateEvidence[] = [];
 	for (const c of candidates) {
@@ -1465,6 +1467,10 @@ export async function issuePermit(
 	}
 	const existing = state.permits[permitId];
 	if (existing) return { state, outcome: "ISSUED", permit: existing };
+	// A promoted task is terminal: the stored record above is still returned
+	// (idempotent retry), but no NEW permit is minted.
+	if (state.task_status === "promoted")
+		throw new Error("issuePermit: task already promoted — a task ships once; create a new task");
 	const permit = await createPermit(
 		{
 			task_hash: state.task.task_hash,
@@ -1602,6 +1608,12 @@ export async function beginPromotion(
 			ctx,
 		);
 		return { state: blocked, outcome: error };
+	}
+	// A promoted task is terminal: after the authority refusals above, no
+	// other permit of this task can start a promotion.
+	if (state.task_status === "promoted") {
+		const blocked = await appendLedger(state, "promotion_aborted", { permit_id, error: "TASK_ALREADY_PROMOTED" }, ctx);
+		return { state: blocked, outcome: "TASK_ALREADY_PROMOTED" };
 	}
 	// Head and tree are the permit's own binding when the caller presents them.
 	// A live git head that has moved is the container's compare-and-swap, not
