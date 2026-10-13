@@ -105,3 +105,20 @@ export function gitAuthEnv(token) {
 		GIT_CONFIG_VALUE_0: `Authorization: Bearer ${token}`,
 	});
 }
+
+/**
+ * Cloudflare credentials the `cf` CLI may use when the OAuth login in $HOME
+ * has expired. Passed ONLY to the `cf` process (never to an agent or
+ * evaluator command; NEVER_PASSED_TO_AGENT refuses them in the allowlist).
+ */
+export const CF_CLI_ENV_VARS = Object.freeze(["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"]);
+
+/**
+ * minimalEnv() for a `cf` CLI process: the base variables plus
+ * CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID when they are set.
+ *
+ * @returns {Record<string, string>}
+ */
+export function cfEnv() {
+	return minimalEnv(pickEnv([...CF_CLI_ENV_VARS]));
+}

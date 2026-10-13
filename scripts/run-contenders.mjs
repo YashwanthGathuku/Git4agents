@@ -50,7 +50,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { loadContenderIds } from "./lib/agentfleet-slots.mjs";
-import { gitAuthEnv, minimalEnv, parseAgentEnvAllowlist, pickEnv } from "./lib/child-env.mjs";
+import { gitAuthEnv, minimalEnv, parseAgentEnvAllowlist, pickEnv, cfEnv } from "./lib/child-env.mjs";
 
 const baseUrl = process.env.MADGRIX_BASE_URL?.replace(/\/$/, "");
 const taskId = process.env.MADGRIX_TASK_ID;
@@ -244,7 +244,7 @@ async function ensurePushSubscription(repoName) {
 		await capture(
 			"cf",
 			["queues", "subscriptions", "create", "--body", JSON.stringify(body)],
-			{ cwd: repoRoot, env: minimalEnv() },
+			{ cwd: repoRoot, env: cfEnv() },
 		);
 	} catch (err) {
 		const raw = err instanceof Error ? err.message : String(err);

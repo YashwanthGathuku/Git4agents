@@ -26,7 +26,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { gitAuthEnv, minimalEnv } from "./lib/child-env.mjs";
+import { gitAuthEnv, minimalEnv, cfEnv } from "./lib/child-env.mjs";
 import {
 	DEFAULT_FORK_CREW_CONFIG,
 	assertFleetRoster,
@@ -175,7 +175,7 @@ async function ensurePushSubscription(repoName) {
 	try {
 		await capture("cf", ["queues", "subscriptions", "create", "--body", JSON.stringify(body)], {
 			cwd: repoRoot,
-			env: minimalEnv(),
+			env: cfEnv(),
 		});
 	} catch (err) {
 		const raw = err instanceof Error ? err.message : String(err);

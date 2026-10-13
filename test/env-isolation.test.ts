@@ -914,7 +914,14 @@ describe("process environment boundaries of the live-run scripts", () => {
 
 		for (const { file, dump } of runner) {
 			// The runner holds the agents' enrollment secrets; their agent commands never do.
-			assertCredentials(file, dump, "agent", [], ["MADGRIX_AGENT_SECRETS"]);
+			// It also holds the Cloudflare credentials, which it hands only to its
+			// `cf queues subscriptions create` process (cfEnv()); the agent dumps
+			// above assert agents never see them.
+			assertCredentials(file, dump, "agent", [], [
+				"MADGRIX_AGENT_SECRETS",
+				"CLOUDFLARE_API_TOKEN",
+				"CLOUDFLARE_ACCOUNT_ID",
+			]);
 			assertOnly(file, dump, [
 				"MADGRIX_BASE_URL",
 				"MADGRIX_TASK_ID",
@@ -925,6 +932,8 @@ describe("process environment boundaries of the live-run scripts", () => {
 				"MADGRIX_AGENT_ENV_ALLOWLIST",
 				"MADGRIX_CLAIM_PATHS",
 				"MADGRIX_RESULT_PATH",
+				"CLOUDFLARE_API_TOKEN",
+				"CLOUDFLARE_ACCOUNT_ID",
 				MODEL_KEY.name,
 			]);
 			assert.equal(dump.vars.get("MADGRIX_AGENT_SERVICE_TOKEN"), OPERATOR_SECRETS.MADGRIX_AGENT_SERVICE_TOKEN);
@@ -965,6 +974,27 @@ describe("process environment boundaries of the live-run scripts", () => {
 		for (const { file, dump } of evaluations) {
 			assertCredentials(file, dump, undefined, fx.mock.issuedCredentials);
 			assertOnly(file, dump, []);
+		}
+	});
+});
+
+describe("cfEnv: Cloudflare credentials reach only the cf CLI", () => {
+	it("adds CLOUDFLARE_API_TOKEN/ACCOUNT_ID to the minimal base and nothing else", async () => {
+		const mod = await import("../scripts/lib/child-env.mjs");
+		const saved = { ...process.env };
+		try {
+			process.env.CLOUDFLARE_API_TOKEN = "fake-cf-token";
+			process.env.CLOUDFLARE_ACCOUNT_ID = "fake-cf-account";
+			process.env.MADGRIX_CONTROL_SERVICE_TOKEN = "fake-control";
+			const env = mod.cfEnv();
+			assert.equal(env.CLOUDFLARE_API_TOKEN, "fake-cf-token");
+			assert.equal(env.CLOUDFLARE_ACCOUNT_ID, "fake-cf-account");
+			assert.equal(env.MADGRIX_CONTROL_SERVICE_TOKEN, undefined);
+			assert.equal(mod.minimalEnv().CLOUDFLARE_API_TOKEN, undefined);
+			assert.throws(() => mod.parseAgentEnvAllowlist("CLOUDFLARE_API_TOKEN"));
+		} finally {
+			for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+			Object.assign(process.env, saved);
 		}
 	});
 });

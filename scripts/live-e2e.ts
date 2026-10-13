@@ -318,6 +318,10 @@ try {
 		MADGRIX_FLEET_CONFIG: env.MADGRIX_FLEET_CONFIG,
 		MADGRIX_FORK_CREW_CONFIG: env.MADGRIX_FORK_CREW_CONFIG,
 		MADGRIX_RESOLVER_COMMAND: env.MADGRIX_RESOLVER_COMMAND,
+		// The runner hands these to its `cf queues subscriptions create`
+		// process only (cfEnv()); agent commands never receive them.
+		CLOUDFLARE_API_TOKEN: env.CLOUDFLARE_API_TOKEN,
+		CLOUDFLARE_ACCOUNT_ID: env.CLOUDFLARE_ACCOUNT_ID,
 	};
 	try {
 		await run("node", [forkCrew ? "scripts/run-fork-crew.mjs" : "scripts/run-contenders.mjs"], {
