@@ -115,6 +115,8 @@ interface Env {
 	PROMOTION_WORKFLOW: WorkflowBindingLike;
 	/** Optional: one task id whose work-graph page is readable without a token (demo). */
 	MADGRIX_PUBLIC_DEMO_TASK_ID?: string;
+	/** ModuleAgent Durable Objects (docs/MODULE_MEMORY.md). Undeployed. */
+	MODULE_AGENT?: DoNamespace;
 }
 
 /** Queue consumer batch shape (structural; mirrors MessageBatch). */

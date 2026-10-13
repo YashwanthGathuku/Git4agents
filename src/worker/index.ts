@@ -84,11 +84,13 @@ import { AGENT_ID_PATTERN, evaluationBases, resolveAgentBySecret, taskHashFor, t
 import type { PromotionResult, RebaseResult } from "../lib/git-promotion.ts";
 import { computePermitId, TaskAuthority } from "../do/TaskAuthority.ts";
 import { PromotionContainer } from "../do/PromotionContainer.ts";
+import { ModuleAgent } from "../do/ModuleAgent.ts";
+import { moduleAgentName } from "../lib/module-memory.ts";
 import { renderWorkGraphPage } from "./work-graph-page.ts";
 
 /** Re-exported so the runtime can register the Durable Object class from
  *  the entry module (classic DO wiring). */
-export { TaskAuthority, PromotionContainer };
+export { TaskAuthority, PromotionContainer, ModuleAgent };
 
 /* ------------------------------------------------------------------ */
 /* Small HTTP helpers                                                  */
@@ -1682,6 +1684,34 @@ export async function fetch(request: Request, env: Env): Promise<Response> {
 	}
 }
 
+/**
+ * POST /module-agents/:action — forwards to the ModuleAgent Durable Object
+ * named moduleAgentName(repo, module) (docs/MODULE_MEMORY.md). The body
+ * carries `repo` and `module: { id, paths }`; the object refuses a
+ * different identity under its name.
+ */
+async function handleModuleAgent(env: Env, action: string, request: Request): Promise<Response> {
+	if (!(await requireControlPlane(request, env))) return json({ error: "control_plane_auth_required" }, 401);
+	if (!["load", "wake", "memory", "route"].includes(action)) return json({ error: "not_found" }, 404);
+	if (!env.MODULE_AGENT) return json({ error: "module_agents_not_configured" }, 503);
+	const parsed = await readJsonBody(request);
+	if (!parsed.ok) return parsed.response;
+	const repo = parsed.body["repo"];
+	const module = parsed.body["module"] as { id?: unknown; paths?: unknown } | undefined;
+	if (
+		typeof repo !== "string" ||
+		!module ||
+		typeof module.id !== "string" ||
+		!Array.isArray(module.paths) ||
+		!module.paths.every((p) => typeof p === "string")
+	) {
+		return json({ error: "invalid_module_identity" }, 400);
+	}
+	const ns = env.MODULE_AGENT;
+	const stub = ns.get(ns.idFromName(moduleAgentName(repo, { id: module.id, paths: module.paths as string[] })));
+	return doRpc(stub, `/${action}`, { body: parsed.body }).then((r) => json(r.body, r.status));
+}
+
 const REPO_URL = "https://github.com/YashwanthGathuku/Madgrix";
 
 function escapeHtml(text: string): string {
@@ -1724,6 +1754,10 @@ async function route(request: Request, env: Env): Promise<Response> {
 	if (request.method === "GET" && parts.length === 0) return landingPage(env);
 	if (request.method === "GET" && parts.length === 1 && parts[0] === "health") {
 		return json({ ok: true, service: "madgrix", protocol: "git4agents" }, 200);
+	}
+	// POST /module-agents/{load,wake,memory,route} — control plane only.
+	if (request.method === "POST" && parts.length === 2 && parts[0] === "module-agents") {
+		return handleModuleAgent(env, parts[1], request);
 	}
 	// POST /tasks
 	if (request.method === "POST" && parts.length === 1 && parts[0] === "tasks") {

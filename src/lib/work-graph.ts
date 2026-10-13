@@ -116,3 +116,16 @@ export function buildWorkGraph(state: AuthorityState): WorkGraph {
 		candidate_sha: composition ? candidateSha(composition) : null,
 	};
 }
+
+/**
+ * The WorkGraph plus the module routing the main agent recorded for this
+ * task (docs/MODULE_MEMORY.md). Display data only: routing never changes
+ * claims, composition, verdict, or promotion.
+ */
+export function withModuleRouting(
+	graph: WorkGraph,
+	routing: import("./module-memory.ts").RoutingRecord,
+): WorkGraph & { module_routing: import("./module-memory.ts").RoutingRecord[] } {
+	const prior = (graph as { module_routing?: import("./module-memory.ts").RoutingRecord[] }).module_routing ?? [];
+	return { ...graph, module_routing: [...prior, routing] };
+}
