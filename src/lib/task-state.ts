@@ -1580,18 +1580,6 @@ export async function beginPromotion(
 		);
 		return { state: blocked, outcome: "PROMOTION_IN_FLIGHT" };
 	}
-	const recomputed = await buildPermitId(
-		{
-			task_hash: permit.task_hash,
-			baseline_commit: permit.baseline_commit,
-			winning_tree_sha256: permit.winning_tree_sha256,
-			evaluation_bundle_hash: permit.evaluation_bundle_hash,
-			selector_policy_hash: permit.selector_policy_hash,
-			expected_destination_head: permit.expected_destination_head,
-		},
-		ctx.sha256Hex,
-	);
-	if (recomputed !== permit.permit_id) return { state, outcome: "PERMIT_ID_INVALID" };
 	const contender = Object.hasOwn(state.contenders, permit.contender_id)
 		? state.contenders[permit.contender_id]
 		: undefined;
@@ -1638,6 +1626,21 @@ export async function beginPromotion(
 		);
 		return { state: aborted, outcome: "EVAL_BUNDLE_MISMATCH" };
 	}
+	// After the admission checks. A stuffed permit id must not hide an omitted
+	// merge-artifact scan behind PERMIT_ID_INVALID, and a mismatched id still
+	// never becomes a reservation.
+	const recomputed = await buildPermitId(
+		{
+			task_hash: permit.task_hash,
+			baseline_commit: permit.baseline_commit,
+			winning_tree_sha256: permit.winning_tree_sha256,
+			evaluation_bundle_hash: permit.evaluation_bundle_hash,
+			selector_policy_hash: permit.selector_policy_hash,
+			expected_destination_head: permit.expected_destination_head,
+		},
+		ctx.sha256Hex,
+	);
+	if (recomputed !== permit.permit_id) return { state, outcome: "PERMIT_ID_INVALID" };
 	const reservation: PromotionReservation = {
 		permit_id,
 		contender_id: permit.contender_id,
