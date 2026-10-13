@@ -27,6 +27,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { gitAuthEnv, minimalEnv, cfEnv } from "./lib/child-env.mjs";
+import { assertForkAtBaseline } from "./lib/fork-baseline.mjs";
 import {
 	DEFAULT_FORK_CREW_CONFIG,
 	assertFleetRoster,
@@ -267,6 +268,7 @@ try {
 	await capture("git", ["clone", "--quiet", "--single-branch", "--branch", "main", remote, dir], {
 		env: gitAuthEnv(token),
 	});
+	assertForkAtBaseline(dir, task.baseline_commit, minimalEnv());
 	for (const sub of crew.subs) {
 		const secret = /** @type {string} */ (agentSecrets[sub.id]);
 		const claimed = await postJson(

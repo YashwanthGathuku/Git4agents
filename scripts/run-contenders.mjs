@@ -51,6 +51,7 @@ import { fileURLToPath } from "node:url";
 
 import { loadContenderIds } from "./lib/agentfleet-slots.mjs";
 import { gitAuthEnv, minimalEnv, parseAgentEnvAllowlist, pickEnv, cfEnv } from "./lib/child-env.mjs";
+import { assertForkAtBaseline } from "./lib/fork-baseline.mjs";
 
 const baseUrl = process.env.MADGRIX_BASE_URL?.replace(/\/$/, "");
 const taskId = process.env.MADGRIX_TASK_ID;
@@ -333,7 +334,7 @@ const runOne = async (agentId) => {
 	const dir = await mkdtemp(path.join(workRoot, `madgrix-${agentId.replace(/[^A-Za-z0-9._-]/g, "_")}-`));
 	try {
 		await run("git", ["clone", "--quiet", "--single-branch", "--branch", "main", remote, dir], { env: gitAuthEnv(token) });
-		const baseline = await capture("git", ["rev-parse", "HEAD"], { cwd: dir });
+		const baseline = assertForkAtBaseline(dir, task.baseline_commit, minimalEnv());
 
 		// No service token and no other operator credential: only the agent's
 		// own identifiers plus what the operator explicitly allowlisted.
