@@ -43,6 +43,7 @@
  *   MADGRIX_REGRESSION_COMMAND / SEMANTIC / STATIC / SECURITY commands
  *   MADGRIX_HIDDEN_TESTS_DIR / MADGRIX_TEST_GLOBS / MADGRIX_HARNESS_VERSION
  *                                  passed through to the evaluator
+ *   MADGRIX_SKIP_CF_PREFLIGHT=1    skip the cf whoami / queues list preflight
  *   MADGRIX_TRUST_KEY              authority public key file pinned when
  *                                  verifying the bundle (default
  *                                  keys/authority.pub)
@@ -63,7 +64,8 @@ import {
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 import { sha256Hex } from "../src/lib/canonical.ts";
 import { classifyPair } from "../src/lib/claims.ts";
@@ -72,7 +74,7 @@ import { verifierReportPayload } from "../src/lib/verifier-keys.ts";
 import { SELECTOR_POLICY_VERSION, type ReferenceReport } from "../src/lib/types.ts";
 import { loadContenderIds } from "./lib/agentfleet-slots.mjs";
 import { crewAgentIds, loadForkCrew } from "./lib/fork-crew.mjs";
-import { minimalEnv, parseAgentEnvAllowlist, pickEnv } from "./lib/child-env.mjs";
+import { cfEnv, minimalEnv, parseAgentEnvAllowlist, pickEnv } from "./lib/child-env.mjs";
 
 const env = process.env;
 const baseUrl = env.MADGRIX_BASE_URL?.replace(/\/$/, "");
@@ -124,6 +126,63 @@ if (missing.length) {
 	console.error("Missing required environment:", missing.map(([k]) => k).join(", "));
 	process.exit(2);
 }
+/* ------------------------------------------------------------------ */
+/* Preflight: fail fast, with a clear message, before any task exists. */
+/* Never prints a token value or the cf CLI's output.                  */
+{
+	const problems: string[] = [];
+	const tokens: Array<[string, string]> = [
+		["MADGRIX_CONTROL_SERVICE_TOKEN", controlToken!],
+		["MADGRIX_AGENT_SERVICE_TOKEN", agentToken!],
+		["MADGRIX_EVALUATION_SERVICE_TOKEN", evaluationToken!],
+	];
+	for (const [name, value] of tokens) {
+		// The Worker refuses every configured secret shorter than 16 characters
+		// (src/worker/index.ts requireBearer), so every call would be a 401.
+		if (value.length < 16) problems.push(`${name} is shorter than 16 characters; the Worker refuses it (401)`);
+	}
+	if (new Set(tokens.map(([, v]) => v)).size !== tokens.length) {
+		problems.push("the three service tokens must be distinct (one per trust zone)");
+	}
+	const trustKey = path.resolve(env.MADGRIX_TRUST_KEY ?? "keys/authority.pub");
+	if (!existsSync(trustKey)) {
+		problems.push(
+			`authority public key not found at ${env.MADGRIX_TRUST_KEY ? "MADGRIX_TRUST_KEY" : "keys/authority.pub"}; ` +
+				"set MADGRIX_TRUST_KEY to the public half of AUTHORITY_SIGNING_KEY (keys/README.md)",
+		);
+	}
+	if (env.MADGRIX_QUEUE_ID && env.MADGRIX_SKIP_CF_PREFLIGHT !== "1") {
+		if (!existsSync(path.resolve("node_modules/cf"))) {
+			problems.push("node_modules/cf is missing: run `npm ci` in the repository root (the cf CLI loads cloudflare.config.ts)");
+		} else {
+			const cf = (args: string[]) =>
+				spawnSync("cf", args, { env: cfEnv(), stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", timeout: 60_000 });
+			const who = cf(["auth", "whoami"]);
+			let authed = false;
+			try {
+				authed = who.status === 0 && JSON.parse(who.stdout).authenticated === true;
+			} catch {
+				authed = false;
+			}
+			if (who.error) problems.push("the cf CLI is not on PATH (npm i -g cf, or use npx cf)");
+			else if (!authed) problems.push("cf auth whoami: not authenticated; run `cf auth login` or set CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID");
+			else if (cf(["queues", "list"]).status !== 0) {
+				problems.push(
+					"cf queues list failed: the login/token cannot read Queues on the account " +
+						"(needs queues read/write; set CLOUDFLARE_ACCOUNT_ID if cf lists no account)",
+				);
+			}
+		}
+	} else if (!env.MADGRIX_QUEUE_ID) {
+		console.error("[Git4agents] preflight: MADGRIX_QUEUE_ID unset; push subscriptions are skipped and must already exist");
+	}
+	if (problems.length) {
+		console.error("[Git4agents] preflight failed:\n  - " + problems.join("\n  - "));
+		process.exit(2);
+	}
+	console.error("[Git4agents] preflight OK");
+}
+
 let agentIds: string[];
 try {
 	agentIds = forkCrew ? crewAgentIds(loadForkCrew(env.MADGRIX_FORK_CREW_CONFIG)) : loadContenderIds();
