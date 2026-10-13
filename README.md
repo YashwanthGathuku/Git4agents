@@ -89,7 +89,7 @@ except where a line says otherwise.
   bench 26/26 adversarial trials, `zero_tolerance_ok=true`. No CI run exists for the
   commits after it on this branch (CI runs on pushes to `main` and `codex/**` and on
   pull requests).
-- **Local runs of this branch's tree** (2026-10-13, `grok/final-fixes`): Node v22, `npm run typecheck` clean, `npm test` 363 tests / 116 suites / 0 failures.
+- **Local runs of this branch's tree** (2026-10-13, `grok/final-fixes`): Node v22, `npm run typecheck` clean, `npm test` 372 tests / 119 suites / 0 failures.
   Earlier (2026-10-03, 281 tests at that tree): `SLICE OK`, `HEAD-MOVE OK`, bench 26/26 with `zero_tolerance_ok=true`; with
   Node v24.21.0, the same steps in the order `.github/workflows/ci.yml` runs them,
   including `npm run build` (Worker bundle and container image, built with a local
@@ -185,9 +185,9 @@ npm run bench
 Test summary of this tree (local run, Node v22, 2026-10-13):
 
 ```
-tests 363
-suites 116
-pass 363
+tests 372
+suites 119
+pass 372
 fail 0
 ```
 
@@ -228,6 +228,10 @@ The orchestrator requires environment variables documented at the top of `script
 
 Provider-specific coding agents are deliberately not hardcoded. `MADGRIX_AGENT_COMMAND` may invoke Codex, Claude Code, Aider, an AOS/Agent-Fleet runner, or another coding-agent command.
 
+## Module memory
+
+`npm run demo:memory` reads the repository once, as one card per module, refreshes incrementally from `git diff`, and wakes only the owning module agent for a change. The `ModuleAgent` Durable Object isn't deployed. Design, numbers and limits are in [`docs/MODULE_MEMORY.md`](docs/MODULE_MEMORY.md).
+
 ## API surface
 
 | Method | Route | Identity | Purpose |
@@ -251,6 +255,7 @@ Provider-specific coding agents are deliberately not hardcoded. `MADGRIX_AGENT_C
 | GET | `/tasks/:id/graph` | AGENT/CONTROL (none for `MADGRIX_PUBLIC_DEMO_TASK_ID`) | Work graph, HTML or JSON |
 | GET | `/` | none | Landing page |
 | GET | `/health` | none | Liveness JSON |
+| POST | `/module-agents/{load,wake,memory,route}` | CONTROL | ModuleAgent memory (docs/MODULE_MEMORY.md); 503 without the `MODULE_AGENT` binding |
 
 Every answer is JSON: a request body that is not JSON is 415, an exception in a route is 500 `internal_error`, a Durable Object answer that is not JSON is 502 `upstream_not_json`, and a task authority that fails is 502 `task_authority_failed` (`specs/amendments/promotion-runtime-v1.md`).
 
