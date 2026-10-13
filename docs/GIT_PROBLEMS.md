@@ -1,3 +1,5 @@
+> **Historical document.** Written 2026-10-04 against `git4agents/combined`. Some statements (for example "root path returns not_found") are superseded: the Worker now serves a landing page at `/` and `/health`. Current status lives in `README.md` and `docs/SUBMISSION_CHECKLIST.md`.
+
 # Git4agents git problems
 
 Research-and-fix plan. Only problems that showed up in this project. Contest deadline is 14 October 2026. Public name is Git4agents. The worker stays https://madgrix.ygathuku96.workers.dev. Its root path returns not_found. Leave that alone.

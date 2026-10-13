@@ -46,7 +46,7 @@ npm run bench            26/26 adversarial trials
                          zero_tolerance_ok=true
 ```
 
-That count is not this branch. Local `npm test` on the merge is 281 tests / 87 suites / 0 failures. Typecheck, build, slice, headmove, and bench were not re-run for the merge. The Oct 2 CI also syntax-checked the three live-run scripts and both container Git helpers.
+That count is not this branch. Local `npm test` on `grok/final-fixes` (2026-10-13) is 363 tests / 116 suites / 0 failures; typecheck clean. Typecheck, build, slice, headmove, and bench were not re-run for the merge. The Oct 2 CI also syntax-checked the three live-run scripts and both container Git helpers.
 
 ## Required before recording the final demo
 

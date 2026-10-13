@@ -1,5 +1,7 @@
 # Git4agents
 
+> Public name **Git4agents**. The protocol and code are called MADGRIX; the Cloudflare Worker is named `madgrix`.
+
 **A governed promotion protocol for autonomous software agents** — built on Cloudflare Workers, Artifacts, Queues, Durable Objects, Workflows, and Containers.
 
 MADGRIX turns concurrent agent work into a controlled software-change pipeline:
@@ -87,9 +89,8 @@ except where a line says otherwise.
   bench 26/26 adversarial trials, `zero_tolerance_ok=true`. No CI run exists for the
   commits after it on this branch (CI runs on pushes to `main` and `codex/**` and on
   pull requests).
-- **Local runs of this branch's tree** (2026-10-03): with Node v22.22.0,
-  `npm run typecheck` clean, `npm test` 281 tests / 87 suites / 0
-  failures, `SLICE OK`, `HEAD-MOVE OK`, bench 26/26 with `zero_tolerance_ok=true`; with
+- **Local runs of this branch's tree** (2026-10-13, `grok/final-fixes`): Node v22, `npm run typecheck` clean, `npm test` 363 tests / 116 suites / 0 failures.
+  Earlier (2026-10-03, 281 tests at that tree): `SLICE OK`, `HEAD-MOVE OK`, bench 26/26 with `zero_tolerance_ok=true`; with
   Node v24.21.0, the same steps in the order `.github/workflows/ci.yml` runs them,
   including `npm run build` (Worker bundle and container image, built with a local
   Docker daemon; the image was never started) and the typecheck against the generated
@@ -111,9 +112,10 @@ except where a line says otherwise.
 
 ### Known gaps
 
-- **Nothing has been deployed.** No code in this repository has run on Cloudflare
-  Workers, Durable Objects, Containers, Workflows or Queues, and `npm run live:e2e`
-  has never been run against a deployment. The proof step that remains is:
+- **No end-to-end live run yet.** A `madgrix` Worker may exist on workers.dev from
+  earlier setup, but no recorded run of this tree on Cloudflare Workers, Durable
+  Objects, Containers, Workflows or Queues exists, and `npm run live:e2e` has not
+  completed against a deployment. The proof step that remains is:
 
   ```
   real deployed Worker
@@ -162,7 +164,12 @@ except where a line says otherwise.
 
 ## Local verification
 
-Requirements: Node 24, npm, Git, Docker for the Cloudflare container build.
+Requirements:
+
+- Node 24 (22 also passes the tests), npm, Git.
+- Docker, only for `npm run build` (it builds the promotion-container image).
+- For the live run only: the `cf` CLI (installed by `npm ci` as a dev dependency; run it from the repository root, because it loads `cloudflare.config.ts`) and a Cloudflare login (`cf auth login`) or `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`.
+- Agentfleet `fleet` is **optional**: it is a roster cross-check only and never runs agents. Set `MADGRIX_AGENT_IDS` to skip it, or `MADGRIX_FLEET_BIN` to point at it.
 
 ```bash
 npm install
@@ -175,12 +182,12 @@ npm run verify -- --trust-key .slice-output/authority.pub .slice-output/promotio
 npm run bench
 ```
 
-Test summary of this branch's tree (local run, Node v22.22.0, 2026-10-03):
+Test summary of this tree (local run, Node v22, 2026-10-13):
 
 ```
-tests 281
-suites 87
-pass 281
+tests 363
+suites 116
+pass 363
 fail 0
 ```
 
@@ -195,11 +202,27 @@ High-level prerequisites:
 3. Have a baseline Artifact repository and exact baseline commit.
 4. Provide a real coding-agent command that writes its tool-status log (`specs/amendments/tool-status-v1.md`; for Claude Code, pipe `claude -p ... --output-format stream-json --verbose` through `scripts/adapters/claude-code-tool-log.mjs`), the claim scope (`MADGRIX_CLAIM_PATHS`; `"**"` is refused), and independent evaluation commands.
 
-Then run:
+Then run (full walkthrough with every variable: [`docs/CLOUDFLARE_LIVE_READINESS.md`](docs/CLOUDFLARE_LIVE_READINESS.md)):
 
 ```bash
+npm ci
+cf auth login                      # or export CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
+cf queues list                     # must succeed from the repo root
+cf queues create --queue-name madgrix-events   # once, if missing
+export MADGRIX_BASE_URL=https://madgrix.<subdomain>.workers.dev
+export MADGRIX_CONTROL_SERVICE_TOKEN=... MADGRIX_AGENT_SERVICE_TOKEN=... MADGRIX_EVALUATION_SERVICE_TOKEN=...  # >=16 chars, distinct
+export MADGRIX_QUEUE_ID=<id of madgrix-events from cf queues list>
+export MADGRIX_BASELINE_REPO=<artifact repo> MADGRIX_BASELINE_COMMIT=<sha>
+export MADGRIX_INTENT="..." MADGRIX_BEHAVIOR_CONTRACT="..."
+export MADGRIX_AGENT_COMMAND="..." MADGRIX_AGENT_IDS=agent-a,agent-b,agent-c
+export MADGRIX_CLAIM_PATHS="src/**" MADGRIX_HIDDEN_TEST_COMMAND="npm test"
+export MADGRIX_TRUST_KEY=/secure/location/authority.pub   # until keys/authority.pub is committed (keys/README.md)
 npm run live:e2e
 ```
+
+`live:e2e` runs a preflight first (token lengths, trust key, `node_modules/cf`, `cf auth whoami`, `cf queues list`) and exits 2 with a list of problems before creating any task.
+
+The Worker also answers `GET /` (landing page) and `GET /health`. Set the optional var `MADGRIX_PUBLIC_DEMO_TASK_ID` to make one task's work-graph page readable without a token.
 
 The orchestrator requires environment variables documented at the top of `scripts/live-e2e.ts`. It freezes verifier keys before candidate creation, launches three agents concurrently, waits for real push-event delivery, evaluates immutable candidate SHAs independently, runs the Verdict Seam, starts the promotion (`POST /tasks/:id/promote` → 202) and polls its Workflow instance until it is complete (`MADGRIX_PROMOTION_TIMEOUT_MS`, default 15 minutes), fetches the promotion bundle the TaskAuthority signed (`GET /tasks/:id/bundle`), and verifies it offline against the pinned authority key (`MADGRIX_TRUST_KEY`, else `keys/authority.pub`).
 
@@ -225,6 +248,9 @@ Provider-specific coding agents are deliberately not hardcoded. `MADGRIX_AGENT_C
 | GET | `/tasks/:id/promotions/:permit_id` | CONTROL | The instance's status; once `complete`, the promotion's answer as `result` (`PROMOTED`, or a 409 refusal) |
 | GET | `/tasks/:id/bundle` | CONTROL | Promotion bundle the task authority signed at finalize |
 | GET | `/tasks/:id/ledger` | none | Task ledger |
+| GET | `/tasks/:id/graph` | AGENT/CONTROL (none for `MADGRIX_PUBLIC_DEMO_TASK_ID`) | Work graph, HTML or JSON |
+| GET | `/` | none | Landing page |
+| GET | `/health` | none | Liveness JSON |
 
 Every answer is JSON: a request body that is not JSON is 415, an exception in a route is 500 `internal_error`, a Durable Object answer that is not JSON is 502 `upstream_not_json`, and a task authority that fails is 502 `task_authority_failed` (`specs/amendments/promotion-runtime-v1.md`).
 

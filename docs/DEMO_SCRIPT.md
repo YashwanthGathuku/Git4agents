@@ -122,7 +122,7 @@ The slice above is one contender per fork. The fork-crew path is separate. When 
 ## Pre-flight checklist (day before)
 
 - [ ] Fresh clone/machine: `npm install` works with no cache.
-- [ ] `npm test` → 300/300 on Node 24 with a fleet that prints `summary.agent_ids`. `npm run slice` → ends `SLICE OK`.
+- [ ] `npm test` → 363/363 (Node 22/24); `fleet` is optional (roster cross-check only, skip with `MADGRIX_AGENT_IDS`). `npm run slice` → ends `SLICE OK`.
 - [ ] Screen-record one clean full run; keep the file as the live-failure backup.
 - [ ] Terminal font large enough to read on video; clear scrollback before each command.
 - [ ] If showing the tamper scene, rehearse the `node -e` one-liner once.
