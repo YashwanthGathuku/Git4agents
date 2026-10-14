@@ -166,6 +166,10 @@ function rpcResult(id: unknown, result: unknown, modern: boolean): Response {
 	const stamped = modern && record
 		? {
 				...record,
+				// 2026-07-28 consumes this wire-only discriminator before the
+				// public SDK result reaches callers. Completed one-shot MADGRIX
+				// tools never need an MRTR input_required response.
+				resultType: "complete",
 				_meta: {
 					...(asRecord(record._meta) ?? {}),
 					"io.modelcontextprotocol/serverInfo": { name: SERVER_NAME, version: SERVER_VERSION },
@@ -429,7 +433,10 @@ export async function handleMcp(request: Request, coreFetch: CoreFetch): Promise
 			false,
 		);
 	}
-	if (body.method === "ping") return rpcResult(body.id, {}, modern);
+	if (body.method === "ping") {
+		if (modern) return rpcError(body.id, -32601, "Method not found: ping");
+		return rpcResult(body.id, {}, false);
+	}
 	if (body.method === "tools/list") {
 		return rpcResult(
 			body.id,
