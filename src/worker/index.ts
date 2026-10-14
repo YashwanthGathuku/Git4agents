@@ -91,11 +91,12 @@ import {
 import type { PromotionResult, RebaseResult } from "../lib/git-promotion.ts";
 import { computePermitId, TaskAuthority } from "../do/TaskAuthority.ts";
 import { PromotionContainer } from "../do/PromotionContainer.ts";
+import { ModuleAgent } from "../do/ModuleAgent.ts";
 import { renderWorkGraphPage } from "./work-graph-page.ts";
 
 /** Re-exported so the runtime can register the Durable Object class from
  *  the entry module (classic DO wiring). */
-export { TaskAuthority, PromotionContainer };
+export { TaskAuthority, PromotionContainer, ModuleAgent };
 
 /* ------------------------------------------------------------------ */
 /* Small HTTP helpers                                                  */

@@ -20,6 +20,7 @@ export default defineConfig({
 		exports: {
 			TaskAuthority: exports.durableObject({ storage: "sqlite" }),
 			PromotionContainer: exports.durableObject({ storage: "sqlite", container: promotionContainer }),
+			ModuleAgent: exports.durableObject({ storage: "sqlite" }),
 			PromotionWorkflow: exports.workflow({
 				name: "madgrix-promotion",
 				limits: { steps: 8 },
@@ -44,6 +45,7 @@ export default defineConfig({
 			// with; its public key is pinned in keys/authority.pub (keys/README.md).
 			AUTHORITY_SIGNING_KEY: bindings.secret(),
 			PROMOTION_CONTAINER: bindings.durableObject({ worker: "madgrix", exportName: "PromotionContainer" }),
+			MODULE_AGENT: bindings.durableObject({ worker: "madgrix", exportName: "ModuleAgent" }),
 			// POST /tasks/:id/promote creates one instance per permit, with the
 			// permit id as the instance id (spec 5 §5;
 			// specs/amendments/promotion-runtime-v1.md).
