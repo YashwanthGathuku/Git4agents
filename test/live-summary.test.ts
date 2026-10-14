@@ -42,9 +42,13 @@ describe("live-e2e summary", () => {
 			assert.equal(theustadVerdict(true, result), "FINAL VERIFIED");
 			// The demo crew must still change something when its baseline already
 			// holds a previous run's promoted output (live run on 3b71d3a).
-			const again = await runCrewOnFork(dir, loadForkCrew(), undefined, () => ({ final: "FINAL VERIFIED", exit: 0 }));
+			const next = mkdtempSync(path.join(tmpdir(), "madgrix-ustad-next-"));
+			rmSync(next, { recursive: true, force: true });
+			assert.equal(spawnSync("git", ["clone", "--quiet", dir, next], { env }).status, 0);
+			const again = await runCrewOnFork(next, loadForkCrew(), undefined, () => ({ final: "FINAL VERIFIED", exit: 0 }));
 			assert.equal(again.status, "COMPOSED");
 			assert.notEqual(again.sha, result.sha);
+			rmSync(next, { recursive: true, force: true });
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
