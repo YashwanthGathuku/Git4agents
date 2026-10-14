@@ -130,7 +130,10 @@ except where a line says otherwise.
   → VERIFIED
   ```
 
-  One recorded run is evidence, not a reliability claim. Each run promotes onto
+  A second run (2026-10-14, ~09:31 ET, Worker version `f4b4a32e`) also VERIFIED: task
+  `task_6cdb2087a04e389edc87de1c`, baseline `3b71d3a`, crew of 3 (parent + 2 sub-agents,
+  1 contender), TheUstad `FINAL VERIFIED`, combined = promoted `fc9c1e7084ad14067012a56e68bd8f4c5bdc85c2`.
+  Two recorded runs are evidence, not a reliability claim. Each run promotes onto
   `starter-repo` main, so the next run must set `MADGRIX_BASELINE_COMMIT` to the
   current main (the runner refuses a fork that is not at the baseline).
 - **Workflows.** `PromotionWorkflow` has only run against a stand-in binding. The
