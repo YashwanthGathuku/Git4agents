@@ -40,6 +40,11 @@ describe("live-e2e summary", () => {
 			const result = await runCrewOnFork(dir, loadForkCrew(), undefined, () => ({ final: "FINAL VERIFIED", exit: 0 }));
 			assert.deepEqual(result.theustad, { final: "FINAL VERIFIED", exit: 0 });
 			assert.equal(theustadVerdict(true, result), "FINAL VERIFIED");
+			// The demo crew must still change something when its baseline already
+			// holds a previous run's promoted output (live run on 3b71d3a).
+			const again = await runCrewOnFork(dir, loadForkCrew(), undefined, () => ({ final: "FINAL VERIFIED", exit: 0 }));
+			assert.equal(again.status, "COMPOSED");
+			assert.notEqual(again.sha, result.sha);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

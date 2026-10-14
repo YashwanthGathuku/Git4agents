@@ -12,7 +12,7 @@
       "paths": [
         "src/api/**"
       ],
-      "command": "mkdir -p src/api && printf '%s\\n' 'export function handler() { return \"api\"; }' > src/api/handler.js"
+      "command": "mkdir -p src/api && printf '%s\\n' 'export function handler() { return \"api\"; }' > src/api/handler.js && printf '%s\\n' \"$MADGRIX_AGENT_ID run $(date -u +%Y-%m-%dT%H:%M:%SZ)-$$\" >> src/api/runs.txt"
     },
     {
       "id": "sub-ui",
@@ -21,7 +21,7 @@
       "paths": [
         "src/ui/**"
       ],
-      "command": "mkdir -p src/ui && printf '%s\\n' 'export function view() { return \"ui\"; }' > src/ui/view.js"
+      "command": "mkdir -p src/ui && printf '%s\\n' 'export function view() { return \"ui\"; }' > src/ui/view.js && printf '%s\\n' \"$MADGRIX_AGENT_ID run $(date -u +%Y-%m-%dT%H:%M:%SZ)-$$\" >> src/ui/runs.txt"
     }
   ]
 }
