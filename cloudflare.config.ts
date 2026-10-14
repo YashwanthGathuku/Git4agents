@@ -46,6 +46,10 @@ export default defineConfig({
 			AUTHORITY_SIGNING_KEY: bindings.secret(),
 			PROMOTION_CONTAINER: bindings.durableObject({ worker: "madgrix", exportName: "PromotionContainer" }),
 			MODULE_AGENT: bindings.durableObject({ worker: "madgrix", exportName: "ModuleAgent" }),
+			// Recorded competition run 4. handleWorkGraph treats exactly this task
+			// as a read-only public demo; every other task still requires agent or
+			// control authentication. This id is not a credential.
+			MADGRIX_PUBLIC_DEMO_TASK_ID: bindings.text("task_79b1f9d610e94d8e95daa503"),
 			// POST /tasks/:id/promote creates one instance per permit, with the
 			// permit id as the instance id (spec 5 §5;
 			// specs/amendments/promotion-runtime-v1.md).
