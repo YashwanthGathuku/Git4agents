@@ -13,7 +13,8 @@ on the same day.
 
 Same code changes in both cases: an API handler (`src/api/handler.js`), a UI
 view (`src/ui/view.js`), and per-agent run records — produced by two
-concurrent agents and combined into one commit.
+concurrent scripted sub-agents under one parent coordinator and combined into one
+contender commit.
 
 ### WITHOUT Madgrix — raw git (measured 2026-10-14)
 
@@ -44,7 +45,7 @@ agent PRs receiving no review at all).
 | 3/9 | Parent forks once; sub-agents commit concurrently in declared scopes; combined into one SHA |
 | 4/9 | Real push events travel Queue → TaskAuthority (at-least-once, deduped) |
 | 5/9 | Independent evaluation domain (read-only credential): hidden tests, regressions, static, security, provenance |
-| 6/9 | Blind reveal, signed verdicts, TheUstad gate: **FINAL VERIFIED** |
+| 6/9 | Blind reveal + signed verdicts; TheUstad frozen-baseline/clean-parent gate: **FINAL VERIFIED** |
 | 7/9 | Verdict Seam issues one exact-state permit (candidate + baseline + tree digest + bundle hash + policy + destination head) |
 | 8/9 | Promotion container fast-forwards canonical main to the reviewed SHA — no new commit |
 | 9/9 | Authority-signed bundle fetched and verified offline: all checks `OK`, `VERIFIED` |
@@ -67,7 +68,7 @@ any step.
 | Trust me, it was reviewed | Signed DSSE bundle, verifiable offline against a pinned key with no network |
 | History says what changed | History says why: intent, alternatives, evidence, verdict — all recorded |
 
-## The three live runs
+## The four live runs
 
 | Run | Date | Task | Promoted SHA | TheUstad | Bundle |
 |---|---|---|---|---|---|
@@ -78,7 +79,7 @@ any step.
 
 Each run promoted onto `starter-repo` main; each run's baseline was the
 previous run's promotion. The authorized SHA and the shipped SHA were
-identical in all three runs (independently confirmed via `git ls-remote`
+identical in all four runs (independently confirmed via `git ls-remote`
 against the Artifacts remote).
 
 ## Honest limits
@@ -93,4 +94,4 @@ against the Artifacts remote).
 
 ---
 
-*Full narrative: `docs/JOURNAL_2026-10-14_LIVE_RUN.md`. Demo video: `~/workspace/madgrix-live-run/video/git4agents-demo.mp4`.*
+*Full narrative: `docs/JOURNAL_2026-10-14_LIVE_RUN.md`. Run 4 is the recorded competition source run; the final narrated submission video is produced separately from that evidence.*

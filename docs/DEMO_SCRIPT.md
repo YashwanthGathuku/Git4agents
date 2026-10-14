@@ -1,76 +1,168 @@
-# Demo Script — Verdict Seam (~7 minutes)
+# Competition Demo Script — Git4agents / MADGRIX (~7–8 minutes)
 
-A narrated, fully scripted walkthrough of the vertical slice. Everything below is
-deterministic harness code — **no unscripted LLM behavior anywhere**, so the demo
-cannot go off-rails. Run each command exactly as written.
+This script is for the **final competition video**. Use the already-recorded Run 4
+evidence; **do not rerun `live:e2e` just to record the demo**. The goal is to show
+judges the real Cloudflare path, explain why it matters, and finish with independently
+verifiable proof.
 
-**Backup rule:** screen-record one clean run beforehand. If anything goes wrong live,
-play the recording — the slice's *outcomes* are stable across runs even though its
-*IDs* (task hashes, nonces, tokens, permit values) are fresh each run. Never read
-random hex aloud; read the *assertions* (ACCEPT, QUARANTINED, ALREADY_CONSUMED,
-VERIFIED).
+Run 4 facts:
+
+- task: `task_79b1f9d610e94d8e95daa503`
+- baseline: `b3ee4c862dcc6996678dc25c1de5c49b060fa9d4`
+- combined / promoted SHA: `d55332b544992a2e033ca03fa54972c5283eef73`
+- crew: one parent + two scripted sub-agents, one contender
+- TheUstad: `FINAL VERIFIED`
+- result: `MADGRIX_LIVE_E2E_OK`
+- offline promotion bundle: `VERIFIED`
+
+The demo sub-agents are scripted commands. Say that plainly: the video demonstrates
+**coordination, authorization, evaluation, exact-state promotion, and proof**, not LLM
+intelligence.
 
 ---
 
-## 0:00–0:30 — Frame it (say this)
+## 0:00–0:40 — The problem
 
-> "When AI agents write code, who decides what ships — and on what evidence? This is
-> Verdict Seam: agents compete on the same task, their work is checked against tests
-> they never see, blind verifiers judge anonymized code, fixed rules pick a winner,
-> and only the *exact* reviewed code can ship — with a signed proof you can verify
-> offline. Watch the whole loop run in one command."
+**Show:** repository title / README opening.
 
-```bash
-npm install   # if not already done
+**Say:**
+
+> “Git tells us what changed. When autonomous agents write code concurrently, the
+> harder question is: who was allowed to change what, what evidence was checked, who
+> decided which state could ship, and did the exact reviewed state actually reach
+> canonical Git? Git4agents, powered by MADGRIX, adds that governed promotion layer.”
+
+Keep the opening short. Do not start with implementation details.
+
+## 0:40–1:30 — Architecture
+
+**Show:** the Mermaid architecture in `README.md` (rendered on GitHub) or the equivalent
+architecture slide.
+
+Walk left to right:
+
+1. parent + sub-agents work in a scoped contender fork;
+2. Cloudflare Artifacts emits real push events;
+3. `madgrix-events` Queue delivers them to the Worker;
+4. `TaskAuthority` owns task state, claims, evidence, verdict, permit, and ledger;
+5. independent evaluation + blind signed verifier reports feed Verdict Seam;
+6. the exact-state permit starts `PromotionWorkflow`;
+7. the promotion Container is the canonical Git writer;
+8. the authority emits a signed `promotion.bundle`;
+9. a separate verifier checks it offline against a pinned key.
+
+**Say:**
+
+> “The important boundary is that agents never get canonical write authority. The
+> promotion path is the sole writer, and it can only ship the exact permit-bound state.”
+
+## 1:30–2:00 — Real Cloudflare, not a mock
+
+**Show briefly:** Cloudflare dashboard/resources if available:
+
+- Worker `madgrix`;
+- Artifacts namespace `default`;
+- Queue `madgrix-events`;
+- `TaskAuthority`, `PromotionContainer`, `ModuleAgent`;
+- Workflow `madgrix-promotion`;
+- promotion container.
+
+Do not expose secrets, tokens, account-private values, or environment files.
+
+**Say:**
+
+> “This is the deployed stack used by the recorded run. The live E2E intentionally does
+> not use `FakeArtifacts`.”
+
+## 2:00–4:40 — Run 4: show the real 1/9 → 9/9 execution
+
+**Show:** the saved Run 4 terminal replay/log. Pause or annotate at each important step.
+
+### 1/9 — Freeze the task
+
+> “Intent, baseline, behavior contract, and verifier identities are frozen before
+> candidates exist.”
+
+### 2/9 — Commit blind references
+
+> “Verifiers commit their reference reports before candidate exposure, so they cannot
+> rewrite the standard after seeing the answer.”
+
+### 3/9 — Fork once; run the crew
+
+> “One parent coordinates two scripted sub-agents concurrently on one contender fork.
+> They have bounded scopes; they do not hold canonical write authority.”
+
+If visible, point out that the per-run lines in `src/api/runs.txt` and
+`src/ui/runs.txt` guarantee each demo run creates fresh work on top of the previous
+baseline.
+
+### 4/9 — Real push event delivery
+
+> “The Git push is observed through Cloudflare Artifacts events, delivered through the
+> Queue, and ingested by the task authority.”
+
+### 5/9 — Independent evaluation
+
+> “Evaluation gets a read-only credential for the immutable candidate SHA. Mandatory
+> gates are non-compensatory.”
+
+### 6/9 — Blind reports + TheUstad
+
+Stop long enough for the viewer to read:
+
+```text
+TheUstad gate: FINAL VERIFIED
 ```
 
-## 0:30–1:30 — Credibility first: the test suite
+> “TheUstad is a frozen-baseline integrity gate here: it confirms the parent fork is still at the expected baseline and clean before composition. It does **not** semantically judge the combined candidate; the independent evaluation and blind verifier reports do that.”
 
-```bash
-npm test
+### 7/9 — Verdict Seam + exact-state permit
+
+> “An ACCEPT does not mean ‘push something equivalent.’ It produces a single-use permit
+> bound to the exact candidate/tree, evaluation bundle, policy, baseline, and destination
+> head.”
+
+### 8/9 — Canonical promotion
+
+> “The Workflow and promotion Container fast-forward canonical Git to the reviewed
+> candidate SHA itself. No merge commit is invented after review.”
+
+### 9/9 — Signed evidence + offline verification
+
+> “After the write is confirmed, the authority signs the promotion evidence and the
+> separate verifier checks it against the pinned authority key.”
+
+End this section by showing:
+
+```text
+MADGRIX_LIVE_E2E_OK
+FINAL VERIFIED
+VERIFIED
 ```
 
-**Say:** "402 tests, 125 suites, all green — including the slice itself as an integration
-test." **Expected:** `ℹ tests 402 / ℹ pass 402 / ℹ fail 0`. That count is the local Node 22 suite of `grok/final-live` on 2026-10-14, with `MADGRIX_FLEET_BIN` unset. It is not a Cloudflare run. `npm test` does not call `fleet`. `fleet validate` runs only when `MADGRIX_FLEET_BIN` is set, and then only as a roster cross-check. It does not execute the sub-agents.
+## 4:40–5:25 — Prove reviewed SHA == shipped SHA
 
-## 1:30–5:30 — The money: the full loop
+**Show:** Run 4 result / journal and the Artifacts `git ls-remote` confirmation if it is
+in the recording. Highlight:
 
-```bash
-npm run slice
+```text
+d55332b544992a2e033ca03fa54972c5283eef73
 ```
 
-The task: *"`isTokenExpired` returns true iff `exp <= now`"*. Three contenders, four
-blind verifiers. Narrate the beats as the 12 stages scroll:
+**Say:**
 
-| Stage | Say this | Expected line shape |
-|---|---|---|
-| [1] Freeze task | "The intent becomes a task record. The task hash pins the intent, the baseline, and the policy — nothing can be swapped later." | `task task_slice_001 frozen` |
-| [2] Work claims | "Three agents register their plans. A contract conflict on the `JWTClaims` class is flagged RED — it's tracked, not hidden." | conflict classification `RED` |
-| [3] Forks | "Each contender gets its own fork and a short-lived write token — its own fork *only*." | three fork repos, tokens minted |
-| [4] Contender work | "Three push: one correct, one subtly wrong at the boundary, one that tampers with the test files." | candidate SHAs `4f06e3ae8aaf` (c1), `a891c146703e` (c2), `7ca4335cd9ec` (c3) — **these are stable** |
-| [5] Queue ingestion | "Events arrive at-least-once and unordered; duplicates are deduped, unknown repos rejected." | `ACK_DUP` on the redelivery |
-| [6] Evaluation | **Money scene 1.** "The tamperer's test manifest doesn't match the baseline hash. That's a *mechanical* violation — no accusation needed — so contender-3 is quarantined: token revoked, removed from selection, evidence frozen." | `QUARANTINED`, token revoked |
-| [7] Blind verifiers | "Verifiers commit to their judgments *before* seeing anonymized code. One reveals with the wrong nonce — report inadmissible, no retry. That's a frozen rule." | `VERIFIER_REPORT_INADMISSIBLE` |
-| [8] Verdict seam | **The decision.** "Fixed rules: correctness first, then regressions, security, blast radius, minimality — then a blind 2-of-3 vote." | `ACCEPT`, winner contender-1 |
-| [9] Permit + promotion | **Money scene 2.** "The permit binds the exact code, baseline, and destination. Present it twice — the second is a no-op." | `PROMOTED`, then replay → `ALREADY_CONSUMED` |
-| [10] Attestation | "Every step is chained into signed in-toto statements — one bundle, DSSE-signed." | `.slice-output/promotion.bundle` written |
-| [11] Offline verify | "And the proof, checked with no network against the pinned authority key." | 10-line transcript + `VERIFIED`, then `SLICE OK` |
+> “This SHA is the combined candidate that passed the gates, and it is also the SHA at
+> canonical `main`. The protocol is designed to make that identity check mechanical,
+> not a trust-me statement.”
 
-**Do not read hashes aloud.** The candidate SHAs above and the baseline prefix
-`cb8e6dc15090` are the only values stable across runs; everything else (task hash,
-nonces, commitments, token IDs, permit values) is fresh per run.
+Do not spend time reading the full hash aloud.
 
-## 5:30–6:15 — The proof, slowly
+## 5:25–6:10 — Offline proof
 
-```bash
-npm run verify -- --trust-key .slice-output/authority.pub .slice-output/promotion.bundle
-```
+**Show:** the verifier output slowly enough to read:
 
-**Say:** "This is the moment that matters. A third party — an auditor, a customer,
-anyone — checks the promotion with nothing but the bundle and the authority's public
-key, pinned out of band. A key inside the bundle proves nothing." Read the ten lines:
-
-```
+```text
 subject digest........ OK
 candidate digest...... OK
 chain integrity....... OK
@@ -85,44 +177,66 @@ ledger chain.......... OK
 VERIFIED
 ```
 
-## 6:15–6:45 — Tamper-rejection showcase
+**Say:**
 
-```bash
-cp .slice-output/promotion.bundle /tmp/tampered.bundle
-node -e "
-const fs=require('fs'), p='/tmp/tampered.bundle';
-const b=JSON.parse(fs.readFileSync(p,'utf8'));
-const s=b.statements[0].signatures[0];
-s.sig = s.sig.slice(0,10) + (s.sig[10]==='A'?'B':'A') + s.sig.slice(11);
-fs.writeFileSync(p, JSON.stringify(b));"
-npm run verify -- --trust-key .slice-output/authority.pub /tmp/tampered.bundle
-```
+> “The verifier does not trust a key supplied by the bundle. It uses the authority key
+> pinned out of band. That means the promotion evidence remains independently
+> checkable after the run.”
 
-**Say:** "One flipped character in one signature." **Expected:** `chain integrity.......
-FAIL`, `signature............. FAIL`, `NOT VERIFIED`, exit code 1. "The proof is
-fragile on purpose — that's what makes it trustworthy."
+## 6:10–6:50 — Show that the gates can reject work
 
-## 6:45–7:00 — The benchmark harness, and close
+**Show:** the journal section for Run 3 attempt 1 or a concise screenshot.
 
-```bash
-npm run bench -- --quick
-```
+**Say:**
 
-**Say:** "The benchmark harness runs 13 attack classes twice each against the real
-protocol modules. Watch the last line." **Expected:** `"zero_tolerance_ok": true` —
-zero false promotions, zero stale promotions, zero duplicate effects, 100% fail-closed.
+> “The successful runs are not proof that the system always says yes. Earlier the same
+> live path rejected an attempt because the declared claim scope omitted `.madgrix/**`.
+> Nothing was promoted. We corrected the claim and reran; the same gate then passed.
+> That is enforcement, not a decorative audit log.”
 
-**Close:** "Forks are commodity. Adjudication plus enforcement plus verifiable
-promotion — that's Verdict Seam."
+If time permits, mention the local `HEAD-MOVE OK` harness as the reproducible proof that
+a destination move expires the old permit and forces rebase + re-evaluation. Do not
+present the local harness as a live Cloudflare fault-injection run.
 
-The slice above is one contender per fork. The fork-crew path is separate. When two sub-agents change the same lines, the result is CONFLICTED: no commit, no candidate SHA, and no conflict-marker file promoted as ordinary output. A resolver writes a new SHA, and that SHA still goes through evaluation. Do not narrate a marker commit as the crew's candidate.
+## 6:50–7:20 — Why not plain Git?
+
+**Show:** `docs/LIVE_RUN_RESULTS.md` comparison table.
+
+**Say:**
+
+> “Plain Git completed the same file changes in seconds, but it gave us none of the
+> governance guarantees: no enforced work scope, no independent evidence, no blind
+> verdict, no exact-state permit, no signed promotion proof. MADGRIX adds those
+> guarantees before canonical write.”
+
+Do not frame the ~30-minute governed run as a speed benchmark. It is a measured demo
+run dominated by polling/wait windows, and the comparison deliberately separates
+machine time from the human review cost that plain Git leaves unresolved.
+
+## 7:20–7:45 — Close
+
+**Show:** architecture again, ending on `VERIFIED`.
+
+**Say:**
+
+> “Forks are becoming commodity. Git4agents focuses on what happens after agents can
+> write: adjudication, authority, exact-state enforcement, and verifiable history. Git
+> records the change. MADGRIX records why that exact change was allowed to ship.”
 
 ---
 
-## Pre-flight checklist (day before)
+## Recording checklist
 
-- [ ] Fresh clone/machine: `npm install` works with no cache.
-- [ ] `npm test` → 363/363 (Node 22/24); `fleet` is optional (roster cross-check only, skip with `MADGRIX_AGENT_IDS`). `npm run slice` → ends `SLICE OK`.
-- [ ] Screen-record one clean full run; keep the file as the live-failure backup.
-- [ ] Terminal font large enough to read on video; clear scrollback before each command.
-- [ ] If showing the tamper scene, rehearse the `node -e` one-liner once.
+- [ ] Use the saved Run 4 recording/log; do not create a fifth run for the video.
+- [ ] Keep the final video between 5 and 10 minutes.
+- [ ] Terminal text is readable at normal playback speed.
+- [ ] Show architecture before the terminal output so judges know what they are seeing.
+- [ ] Never show service-token values, Artifacts credentials, signing private key, or
+      the contents of the private secrets file.
+- [ ] Say “parent + two scripted sub-agents, one contender,” not “three independent
+      model agents” and not “three contender repositories.”
+- [ ] Show `FINAL VERIFIED`, the promoted SHA, `MADGRIX_LIVE_E2E_OK`, and offline
+      `VERIFIED`.
+- [ ] Keep local slice/head-move/benchmark evidence clearly labeled as local harness
+      evidence.
+- [ ] End with the public repository/branch and submission link/QR only if desired.

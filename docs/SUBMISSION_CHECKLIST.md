@@ -1,42 +1,57 @@
-# Submission Checklist — MADGRIX
+# Submission Checklist — Git4agents / MADGRIX
 
 **Competition:** Cloudflare “Build the next Git platform”  
 **Deadline:** October 14, 2026  
-**Repository:** YashwanthGathuku/Madgrix  
+**Repository:** `YashwanthGathuku/Madgrix`  
+**Submission branch:** `grok/final-live`  
 **License:** MIT
 
-This checklist separates implementation evidence from competition evidence.
-A green local/CI test is not presented as a completed live Cloudflare run.
+This checklist separates reproducible implementation evidence, recorded live Cloudflare
+evidence, and claims that are intentionally withheld.
 
 ## Competition package
 
 | Requirement | Status | Evidence |
 |---|---|---|
 | Agent-native Git concept | ✅ | `README.md`, frozen protocol specs |
-| Cloudflare Worker | ✅ built/CI | `src/worker/index.ts`, `cloudflare.config.ts` |
-| Durable Object authority | ✅ built/CI | `src/do/TaskAuthority.ts` |
-| Cloudflare Queue consumer | ✅ built/CI | official Artifacts push-envelope routing + dedupe tests |
-| Cloudflare Workflow | ✅ built/CI | `PromotionWorkflow` registered in config |
-| Cloudflare Container | ✅ built/CI | `src/do/PromotionContainer.ts`, `container/` |
-| Cloudflare Artifacts integration | ✅ primitives validated | real repo/token/push/clone/revocation validation |
-| Real 3-agent contender runner | ✅ implemented | `scripts/run-contenders.mjs` |
-| Independent evaluator | ✅ implemented | `scripts/evaluate-candidate.ts` |
-| Complete live orchestrator | ✅ implemented | `scripts/live-e2e.ts` |
-| Exact reviewed-state promotion | ✅ implemented/CI | candidate SHA + `tree-digest/v1` + destination HEAD |
-| Offline verifiable evidence | ✅ local slice | in-toto-style statements + DSSE + verifier CLI |
+| Cloudflare Worker | ✅ live | deployed `madgrix` Worker |
+| Cloudflare Artifacts | ✅ live | real baseline/canonical repo + contender forks, scoped Git tokens |
+| Queue | ✅ live | real `cf.artifacts.repo.pushed` delivery through `madgrix-events` |
+| Durable Object authority | ✅ live | `TaskAuthority` used by recorded E2E runs |
+| Workflow | ✅ live success path | promotion instances completed on recorded E2E runs |
+| Container promotion | ✅ live success path | canonical Artifacts repo moved to exact reviewed SHA |
+| Independent evaluation + blind reports | ✅ live | recorded E2E runs |
+| TheUstad frozen-baseline gate | ✅ live | `FINAL VERIFIED`; verifies clean/frozen parent before composition, not candidate semantics |
+| Exact reviewed-state promotion | ✅ live | reviewed/authorized SHA == shipped SHA |
+| Offline verifiable evidence | ✅ live | signed `promotion.bundle`, pinned-key `VERIFIED` |
 | Security/threat model | ✅ | `docs/SECURITY.md`, `specs/EVALUATION_THREAT_MODEL.md` |
-| Architecture documentation | ✅ | `docs/ARCHITECTURE.md` |
-| Open-source license | ✅ MIT | `LICENSE` |
-| Real deployed MADGRIX E2E transcript | ✅ | 2026-10-13 VERIFIED: task `task_0090714a2ca6e6c167ec410a`, promoted `3b71d3a` (README Known gaps) |
-| Demo video | ⬜ | record after successful live E2E |
-| Real benchmark dataset run | ⬜ | `docs/BENCHMARK_RUNBOOK.md` |
-| Submission form | ⬜ | final competition submission |
+| Local test suite | ✅ | 402 tests / 125 suites / 0 failures recorded on competition tree |
+| Adversarial harness | ✅ | 26/26, `zero_tolerance_ok=true` |
+| Architecture documentation | ✅ | `README.md`, `docs/ARCHITECTURE.md` |
+| Open-source license | ✅ | `LICENSE` |
+| Recorded live E2E evidence | ✅ | four successful runs; see `docs/LIVE_RUN_RESULTS.md` |
+| Final 5–10 minute competition video | ⬜ | build from Run 4 recording + narration |
+| Submission form | ⬜ | submit before deadline |
 
-## Current CI evidence
+## Recorded live runs
 
-The Oct 2 `codex/competition-critical-paths` tip recorded:
+| Run | Task | Baseline | Promoted SHA | Result |
+|---|---|---|---|---|
+| 1 | `task_0090714a…` | `7d6cb08` | `3b71d3a` | TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
+| 2 | `task_6cdb2087…` | `3b71d3a` | `fc9c1e7` | TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
+| 3 | `task_735cca4a…` | `fc9c1e7` | `b3ee4c86` | TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
+| 4 | `task_79b1f9d6…` | `b3ee4c86` | `d55332b5` | `MADGRIX_LIVE_E2E_OK`, TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
 
-```
+Each successful run promoted onto the real `starter-repo` Artifacts `main`; each
+run's baseline was the previous run's promotion. The reviewed/authorized SHA and the
+shipped SHA were identical in all four recorded successful runs. Run 4 is the recorded
+demo run.
+
+## Local / CI evidence
+
+The Oct 2 CI base commit recorded:
+
+```text
 npm run typecheck        PASS
 npm run build            PASS
 npm test                 110 tests / 27 suites / 0 failures
@@ -46,52 +61,57 @@ npm run bench            26/26 adversarial trials
                          zero_tolerance_ok=true
 ```
 
-That count is not this branch. Local `npm test` on `grok/final-live` (2026-10-14) is 402 tests / 125 suites / 0 failures; typecheck clean. Typecheck, build, slice, headmove, and bench were not re-run for the merge. The Oct 2 CI also syntax-checked the three live-run scripts and both container Git helpers.
+The competition tree later recorded a local test run of **402 tests / 125 suites /
+0 failures**, with typecheck clean. Node 24 is the recommended reproduction runtime.
 
-## Required before recording the final demo
+## Final submission steps
 
-1. Deploy `madgrix` with three distinct service secrets.
-2. Create/configure `madgrix-events`.
-3. Subscribe `cf.artifacts.repo.pushed` events from the competition namespace
-   to that Queue.
-4. Prepare the real baseline and canonical Artifact repositories.
-5. Run `npm run live:e2e`.
-6. Save the successful transcript and `promotion.bundle`.
-7. Run the verifier separately against that saved bundle.
-8. Re-run the stale-HEAD/commit-swap attack against the deployed path if time
-   permits and preserve the rejection transcript.
-9. Record the demo from the live path; keep the deterministic local slice only
-   as a backup.
-10. Submit before October 14.
+1. Record/edit the **5–10 minute** competition video from the saved Run 4 evidence.
+   Use `docs/DEMO_SCRIPT.md`; do not rerun the live E2E just for the video.
+2. Show the live Cloudflare architecture, Run 4's 1/9→9/9 transcript, exact promoted
+   SHA, and pinned-key offline `VERIFIED`.
+3. Keep secret values off-screen. Do not paste Worker service tokens, Artifacts
+   credentials, or the private signing key into the recording or submission.
+4. Make `grok/final-live` the repository default branch **or** submit a branch-specific
+   repository URL so judges land on the competition tree rather than stale `main`.
+5. Do not redeploy for documentation-only changes. If a redeploy becomes necessary,
+   preserve the existing private secrets file/bindings; a deploy without them already
+   caused one failed attempt.
+6. Submit the final project description, repository, run instructions, and video before
+   the deadline; save the submission receipt.
 
-## Claims that are safe today
+## Claims that are safe
 
-MADGRIX can be described as implementing a governed promotion protocol with
-WorkClaims, isolated candidate repositories, independent evidence,
-non-compensatory eligibility gates, blind signed verifier reports, exact-state
-single-use promotion permits, and offline-verifiable promotion evidence.
+MADGRIX implements and has live-demonstrated a governed promotion path with WorkClaims,
+real Artifacts repositories, push-event Queue delivery, per-task authority state,
+independent evaluation, blind signed verifier reports, TheUstad gating, exact-state
+single-use permits, Workflow/Container promotion, and offline-verifiable signed
+promotion evidence.
 
-Real Cloudflare Artifacts repository/token behavior has been exercised. The
-full Worker → Queue → Durable Object → evaluation → verdict → Container
-promotion path is implemented and builds in CI.
+The strongest concrete statement is:
+
+> In four recorded successful Cloudflare runs, the commit that passed the governed
+> review path was the same commit SHA promoted to the canonical Artifacts repository,
+> and the resulting signed bundle verified offline against a pinned authority key.
 
 ## Claims to keep precise
 
-One fork-crew live run completed end-to-end on Cloudflare (2026-10-13,
-VERIFIED). Do not claim more runs or reliability than that. Do not call the synthetic benchmark a real-world
-accuracy improvement. Do not claim Sigstore-backed production signing; the
-competition implementation uses Ed25519 DSSE envelopes. Do not claim the
-Cloudflare beta fork endpoint works; the documented import fallback is used
-when its known beta failure signature occurs.
+- Four runs are evidence, **not** a production reliability or scale statistic.
+- The competition demo sub-agents are scripted commands, not LLMs; the demo proves
+  coordination and enforcement, not model intelligence.
+- Do not call the synthetic benchmark a real-world accuracy improvement.
+- Do not claim Sigstore-backed production signing; the competition implementation
+  uses Ed25519 DSSE with a pinned public key.
+- Do not claim a deliberate real Queue redelivery test; real push delivery was
+  observed, while duplicate/out-of-order behavior is covered by tests.
+- Do not claim every Workflow/Container failure-recovery branch was fault-injected
+  live; the successful promotion path was.
 
 ## Submission assets still needed
 
-- final demo video;
-- screenshots/diagram chosen for the submission page;
-- concise project description and technical write-up;
-- optional real benchmark evidence if completed in time;
-- final name/trademark clearance before broader commercial launch.
+- final 5–10 minute narrated competition video;
+- final submission-form text and screenshots;
+- submission receipt.
 
-The engineering critical path is complete enough to attempt the real
-deployment. The next blocker is evidence collection on the live Cloudflare
-runtime, not another round of protocol redesign.
+The engineering critical path and live proof are complete. Remaining work is
+presentation and submission, not another protocol redesign or E2E rerun.

@@ -1,49 +1,62 @@
 # Authority keys
 
-`keys/authority.pub` is the pinned public key of the MADGRIX task authority: the
-Ed25519 key whose private half is the Worker secret `AUTHORITY_SIGNING_KEY`, with
-which the TaskAuthority signs every promotion bundle at `/promotion/finalize`
-(`specs/amendments/authority-signing-v1.md`).
+`keys/authority.pub` is the pinned public key for the competition MADGRIX authority.
+The matching Ed25519 private key is stored only as the deployed Worker's
+`AUTHORITY_SIGNING_KEY` secret and is **not** committed. `TaskAuthority` uses that
+private key when finalizing promotion evidence.
 
-`src/cli/verify.ts` trusts this file, or the file given with `--trust-key`, and
-nothing else. The key embedded in a bundle is compared against the pinned key and
-never used as a trust anchor.
+`src/cli/verify.ts` trusts this committed public key, or an explicitly supplied
+`--trust-key` file, and nothing else. A key embedded in a bundle is compared with the
+pinned key; it is never allowed to choose its own trust anchor.
 
-**No production key is provisioned yet**, so this directory does not contain
-`authority.pub`. Until it does, `verify` exits 2 unless `--trust-key` is given.
-The local slice signs with a key generated per run and pins it with
-`--trust-key .slice-output/authority.pub`.
+Four recorded live Cloudflare runs produced signed promotion bundles that verified
+offline against the pinned authority key. The competition key is a long-lived Ed25519
+key; production KMS/HSM/Sigstore lifecycle management remains future hardening.
 
-## Provisioning
+## Provisioning or rotating the key
 
-Generate the key pair outside the repository and never commit the private key:
+Generate the pair outside the repository and never commit the private key:
 
 ```bash
 openssl genpkey -algorithm ed25519 -out /secure/location/authority.pem
 openssl pkey -in /secure/location/authority.pem -pubout -out keys/authority.pub
 ```
 
-- `authority.pem` (PKCS8, `-----BEGIN PRIVATE KEY-----`) becomes the Worker secret
-  `AUTHORITY_SIGNING_KEY`, declared in `cloudflare.config.ts`. PEM or the bare
-  base64 of the DER both work.
-- `keys/authority.pub` (SPKI, `-----BEGIN PUBLIC KEY-----`) is committed. `verify`
-  also accepts the SPKI DER as hex, and refuses a file that holds a private key.
+- `authority.pem` (PKCS8) becomes the Worker secret `AUTHORITY_SIGNING_KEY`.
+- `keys/authority.pub` (SPKI) is the public trust anchor committed to the repository.
+- `src/cli/verify.ts` also accepts SPKI DER as hex and refuses a private-key file as a
+  trust key.
 
-Without `AUTHORITY_SIGNING_KEY`, `/promotion/finalize` answers 503 and consumes
-nothing, so a promotion is never recorded without its signed ship record.
+Without `AUTHORITY_SIGNING_KEY`, promotion finalization answers 503 and does not
+consume the permit, so a successful promotion record cannot be created unsigned.
 
-## Running `npm run live:e2e` before `authority.pub` is committed
+If the authority key is rotated, update the Worker secret and the pinned public key as
+one controlled operation. Historical bundles must be verified with the public key that
+was pinned for their authority at the time; do not rewrite old evidence to a new key.
 
-The Worker is not deployed, so no public key can be fetched from it, and none
-is committed. Until the operator generates the pair above, set
-`MADGRIX_TRUST_KEY` to the public half of the key you uploaded as
-`AUTHORITY_SIGNING_KEY`:
+## Live E2E verification
+
+The live runner uses `MADGRIX_TRUST_KEY` when explicitly supplied; otherwise it can use
+`keys/authority.pub`. Its preflight fails before creating a task when the trust key is
+missing or unreadable.
 
 ```bash
-openssl pkey -in /secure/location/authority.pem -pubout -out /secure/location/authority.pub
-export MADGRIX_TRUST_KEY=/secure/location/authority.pub
+npm run verify -- --trust-key keys/authority.pub <promotion.bundle>
 ```
 
-The `live:e2e` preflight exits 2 with `authority public key not found` when
-neither `MADGRIX_TRUST_KEY` nor `keys/authority.pub` exists, before any task is
-created. Once the production pair exists, commit only `keys/authority.pub`.
+A successful transcript ends with:
+
+```text
+authority key......... PINNED
+signature............. VALID
+ledger chain.......... OK
+
+VERIFIED
+```
+
+## Deployment safety
+
+Never print or commit the private key or Worker service-token values. On the competition
+machine, every Worker deploy must preserve the existing private secrets file/bindings.
+One deploy without that secrets file removed the service-token bindings and caused a
+failed attempt; redeploying with the secrets restored the working Worker.

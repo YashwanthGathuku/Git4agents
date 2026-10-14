@@ -1,42 +1,93 @@
-# Cloudflare architecture
+# Cloudflare architecture — current live state
 
-Status words: **LOCAL VERIFIED**, **CLOUDFLARE VERIFIED**, **NOT VERIFIED**.
+**Current status (2026-10-14): the success path is live-verified.** MADGRIX has
+completed four recorded E2E runs against the deployed `madgrix` Worker and real
+Cloudflare Artifacts repositories. Historical pre-deployment readiness notes are kept
+in `docs/CLOUDFLARE_LIVE_READINESS.md`; they are not the current deployment status.
 
-The binding source is `cloudflare.config.ts` at `424b2b15425a65a25a230e949dea0f4d94192d9e`. The commands and the type check are in `docs/CLOUDFLARE_LIVE_READINESS.md`. The status words below belong to that readiness session. They are not a deployment of the integrated tree, and they are not **TESTED ON CLOUDFLARE** for this SHA.
+## Deployed primitives
 
-## Bindings
-
-Checked against `@cloudflare/config` 0.22.0 and `workerd` 1.20260930.2 installed by `npm ci` in this session. **LOCAL VERIFIED** as a match to those types. **NOT VERIFIED** on the account.
-
-| Binding | Config | Role |
+| Primitive | MADGRIX resource | Current evidence |
 |---|---|---|
-| Worker `madgrix` | `src/worker/index.ts`, compatibility date `2026-10-01`, no compatibility flags | HTTP routes and the queue consumer. No fetch route and no custom domain are declared. |
-| `ARTIFACTS` | `bindings.artifacts({ namespace: "default", dev: { remote: true } })` | Git repos. The namespace is a name in config. It was not listed. |
-| `TASK_AUTHORITY` | Durable Object, sqlite, class `TaskAuthority`, default state `created` | One object per task. |
-| `PROMOTION_CONTAINER` | Durable Object, sqlite, class `PromotionContainer`, container `madgrix-promotion` | Runs `container/promote.sh`, `container/rebase.sh`, and `container/copy-baseline.sh`. |
-| Container | `container/Dockerfile`, `instanceType: "lite"` (1/16 vCPU, 256 MiB, 2 GB disk), `maxInstances: 4` | Image build needs a running Docker CLI. `npm run build` was not run. **NOT VERIFIED**. |
-| `PROMOTION_WORKFLOW` | Workflow `madgrix-promotion`, class `PromotionWorkflow`, step limit 8, success retention 3 days, error retention 7 days | One instance per permit id. |
-| Queue trigger | `madgrix-events`, batch 10, timeout 30 seconds. No dead-letter queue. | Consumer of `cf.artifacts.repo.pushed`. The queue's existence is **NOT VERIFIED**. |
-| Secrets | `EVALUATION_SERVICE_TOKEN`, `CONTROL_SERVICE_TOKEN`, `AGENT_SERVICE_TOKEN`, `AUTHORITY_SIGNING_KEY` | Declared with `bindings.secret()`. `keys/authority.pub` is absent. **LOCAL VERIFIED**. |
+| Worker | `madgrix` | live; HTTP + Queue consumer used by recorded runs |
+| Artifacts | namespace `default` | live baseline/canonical repo + contender forks; scoped Git credentials exercised |
+| Queue | `madgrix-events` | live `cf.artifacts.repo.pushed` delivery observed |
+| Durable Object | `TaskAuthority` | live per-task state used in E2E runs |
+| Durable Object | `PromotionContainer` | live promotion path used |
+| Durable Object | `ModuleAgent` | class deployed; module-memory load/wake path not claimed live |
+| Workflow | `madgrix-promotion` | live successful promotion instances observed |
+| Container | `madgrix-promotion` | live successful canonical Git promotion observed |
+| Signing | `AUTHORITY_SIGNING_KEY` + pinned `keys/authority.pub` | live bundles signed and verified offline |
 
-There is no Wrangler migrations array. Both Durable Object classes are `created` sqlite exports. The account's current migration state is **NOT VERIFIED**.
+The bindings are declared in `cloudflare.config.ts`. The three service tokens and the
+authority private key are Worker secrets; their values are not stored in the repository.
 
-## Local substitutes
+## Live path
 
-The parent record for this SHA is an LF archive: 296 tests passed, `SLICE OK`, `HEAD-MOVE OK`, benchmark `zero_tolerance_ok true`. That suite was not re-run in this session. It is **NOT VERIFIED** here. It uses `FakeArtifacts`, in-memory Durable Object storage, a fake Workflow, and `src/harness/fake-container.ts`, except tests that run `container/promote.sh` and `container/rebase.sh` against local git. Those are not a Container on Cloudflare.
+```mermaid
+flowchart LR
+    A[Parent + 2 scripted sub-agents] --> W[MADGRIX Worker]
+    W --> R[Artifacts<br/>baseline + contender fork]
+    R -->|cf.artifacts.repo.pushed| Q[madgrix-events Queue]
+    Q --> T[TaskAuthority DO]
+    T --> E[Independent evaluation<br/>blind signed reports]
+    E --> V[Verdict Seam<br/>exact-state permit]
+    V --> F[PromotionWorkflow]
+    F --> P[PromotionContainer / Container]
+    P --> C[Canonical Artifacts repo<br/>exact reviewed SHA]
+    C --> B[Signed promotion.bundle]
+    B --> O[Offline verifier<br/>pinned key]
+    O --> X[VERIFIED]
+```
 
-## Public hostname
+The agents never receive canonical write authority. Contender credentials are scoped
+to the contender repository; evaluation receives read-only candidate access; the
+promotion path is the canonical writer.
 
-**CLOUDFLARE VERIFIED** on 2026-10-06 18:28:41 GMT: `GET https://madgrix.ygathuku96.workers.dev/` returned `404` and `{"error":"not_found","path":"/"}`. That does not name a SHA. The deployed commit is **NOT VERIFIED**.
+## Four recorded runs
 
-No Queue consumer, Workflow instance, Container, or Artifact write was invoked. Do not create `madgrix-events` or deploy without an explicit owner request.
+| Run | Task | Baseline | Promoted SHA | Result |
+|---|---|---|---|---|
+| 1 | `task_0090714a…` | `7d6cb08` | `3b71d3a` | TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
+| 2 | `task_6cdb2087…` | `3b71d3a` | `fc9c1e7` | TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
+| 3 | `task_735cca4a…` | `fc9c1e7` | `b3ee4c86` | TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
+| 4 | `task_79b1f9d6…` | `b3ee4c86` | `d55332b5` | `MADGRIX_LIVE_E2E_OK`, TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
 
-## Artifacts calls the code uses
+Each run promoted onto `starter-repo` `main`; each baseline was the previous run's
+promotion. The reviewed/authorized SHA and canonical SHA matched in all four recorded
+successful runs. See `docs/LIVE_RUN_RESULTS.md` and
+`docs/JOURNAL_2026-10-14_LIVE_RUN.md`.
 
-`workerd@1.20260930.2` types `ArtifactsRepo.fork`, `createToken`, `readCommit`, and `log`. It does not type `getHead`. Tips are `log({ ref: "main", limit: 1 })`. Baseline presence is `readCommit`. **LOCAL VERIFIED** as source and types. **NOT VERIFIED** on a live repo.
+## Exact-state promotion
 
-`fork()` is still in that type and in `cf artifacts namespaces repos fork`. The 2026-10-01 `400 [10101]` failure was not repeated. `forkIdempotent` still falls back to an empty repo plus `container/copy-baseline.sh` when the error text contains `10101` or `Invalid repo name`. That fallback stays.
+The permit binds the task, baseline, candidate/tree digest, evaluation bundle, policy,
+and expected destination HEAD. `PromotionWorkflow` delegates the canonical Git write
+to the trusted promotion Container. The Container rechecks the permit-bound state and
+fast-forwards canonical `main` to the **reviewed candidate SHA itself**. A destination
+HEAD move invalidates the old permit; the candidate must be rebased and evaluated as a
+new SHA.
 
-A new per-repo push subscription can drop the first push. The contender and fork-crew runners wait 30 seconds after creating one, then may push an empty commit if the authority has not observed the SHA. That empty commit is a new SHA. The wait is in the scripts. It is **NOT VERIFIED** on Cloudflare.
+After a successful write, `TaskAuthority` signs the promotion evidence into a DSSE
+`promotion.bundle`. `src/cli/verify.ts` validates the bundle offline against the pinned
+authority public key; it does not trust a key merely because the bundle contains it.
 
-The installed `cf` 1.0.0-beta.10 subscription command does not list `artifacts.repo` as a `--source-type`. The runners send that source in `--body`. Public docs still describe `cf.artifacts.repo.pushed`. Acceptance of that body is **NOT VERIFIED**.
+## Precise limits
+
+- The demo crew uses scripted sub-agent commands. This proves the coordination and
+  enforcement substrate, not LLM intelligence.
+- Four runs are evidence, not a production reliability/scale statistic.
+- Real Queue delivery is observed; a deliberate real at-least-once redelivery test is
+  not claimed.
+- Workflow/Container success is observed live; not every failure/restart/terminate
+  branch has been fault-injected live.
+- `ModuleAgent` is deployed but no live module-memory load/wake run is claimed.
+- Signing is Ed25519 DSSE with a pinned public key; Sigstore/KMS-backed production key
+  management is future hardening.
+
+## Deployment safety
+
+Documentation-only commits do not require a Worker redeploy. If the Worker is deployed
+again, preserve the existing private secrets file/bindings. A deploy performed without
+the secrets file removed the service-token bindings and caused one failed attempt; the
+subsequent deploy with the secrets restored the working state. Never print or commit
+secret values.

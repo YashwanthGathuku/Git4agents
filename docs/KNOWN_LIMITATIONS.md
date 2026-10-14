@@ -1,42 +1,77 @@
-# Known limitations
+# Known limitations — current competition tree
 
-Status words: **IMPLEMENTED**, **TESTED ON FINAL SHA LOCALLY**, **TESTED ON CLOUDFLARE**, **NOT VERIFIED**.
+This file describes the current `grok/final-live` competition state. Historical audit,
+readiness, and integration reports keep the status of the SHAs/sessions they name and
+should not be read as the current deployment status.
 
-The current tree is `competition/final`. Commands, counts, and the image build for that tree are in `docs/FINAL_INTEGRATION_REPORT.md`. Nothing in that report was run on Cloudflare.
+## What is proven live
 
-Older counts stay with their SHAs. The 296-test record belongs to `git4agents/combined` `4a8c4cc7b521688f839f0f332605dcefa3984c38` (LF archive, WSL Node v24.21.0). The unrecorded-marker scan on `competition/security` is recorded in `docs/COMPETITION_RED_TEAM.md` and `docs/COMPETITION_FINALIZATION.md`. It was not a Cloudflare run. An LF copy of collaboration `49e53c3205ceccebeb4ae84df84ecd591e966bc2` on the same Node was 300 passed and 0 failed. `npm run slice`, `npm run headmove`, and `npm run bench` were not re-run as standalone commands for that collaboration SHA. Neither count is the final integration.
+Four recorded E2E runs completed against real Cloudflare infrastructure. They exercised
+real Artifacts repositories and push events, `madgrix-events`, `TaskAuthority`,
+independent evaluation, blind signed reports, Verdict Seam, exact-state permits,
+`PromotionWorkflow`, the promotion Container, signed bundles, and pinned-key offline
+verification. In each successful run the reviewed/authorized SHA was the SHA shipped to
+canonical `starter-repo` `main`.
 
-## Not a Cloudflare result
+## Limits and non-claims
 
-Nothing in this SHA was deployed. `live:e2e` was not run. On 2026-10-06 a readiness session saw `GET https://madgrix.ygathuku96.workers.dev/` return 404 `not_found`. That response does not name a SHA. It is **NOT VERIFIED** for this tree. A later `npm run build` from an LF archive produced a local image, `cloudflare-build/0e7aaa6dd861/madgrix-promotion:63f515387052`. That image was not started. The command log is `docs/FINAL_INTEGRATION_REPORT.md`. A local image is not a Cloudflare run.
+1. **Four runs are not a reliability statistic.** They prove the path can complete;
+   they do not establish production availability, throughput, or fleet-scale behavior.
+2. **Demo agents are scripted.** The fork-crew evidence demonstrates coordination,
+   authority separation, evaluation, and promotion. It is not evidence of LLM coding
+   quality or autonomous reasoning.
+3. **Queue redelivery.** Real push-event delivery is observed. A deliberate real
+   at-least-once redelivery was not induced; duplicate/out-of-order handling is tested
+   in the state machine.
+4. **Workflow/Container failure branches.** The success path is live-verified. Some
+   retry/restart/terminate and injected-failure branches remain primarily local-test
+   evidence.
+5. **In-flight quarantine.** Quarantine can stop future promotion/finalization, but a
+   Git push already executing in the Container is not magically rolled back. Finalize
+   refuses to create valid signed promotion evidence for an invalid state.
+6. **Escalation bookkeeping.** A later ACCEPT can move task status back to
+   `verdict_reached` while an earlier escalation record remains unresolved. This is
+   documented hardening work.
+7. **Evaluation identity.** The competition implementation uses a distinct shared
+   bearer token for the evaluation domain, not mTLS/workload identity.
+8. **Signing/key management.** Bundles use Ed25519 DSSE with a public key pinned in
+   `keys/authority.pub`. Production KMS/HSM/Sigstore lifecycle management is future
+   hardening.
+9. **Synthetic benchmark.** The ordinary benchmark is harness validation, not
+   evidence of real-world accuracy improvement.
+10. **Module memory.** The `ModuleAgent` Durable Object class is deployed, and the
+    local memory/routing implementation is tested, but no live module-memory load/wake
+    run is claimed and ModuleAgent does not itself edit code.
+11. **Agent sandboxing.** The recorded demo uses local Git worktrees and scoped
+    credentials. Those worktrees are not claimed as adversarial sandbox/microVM
+    isolation.
+12. **Artifacts beta behavior.** Native `fork()` has historically returned `10101` on
+    this account; the explicit baseline-copy/import fallback must remain.
+13. **Platform/runtime reproducibility.** Node 24 on Linux/WSL with LF shell scripts is
+    the recommended competition environment. Older Node 22 builds can require
+    experimental TypeScript support in child processes; CRLF shell exports can break
+    `bash`.
 
-## Composition
+## Composition / conflict precision
 
-- A fork-crew `CONFLICTED` record still comes only from `POST /tasks/:id/composition` (control token). The runner does not create a marker commit. A commit someone else builds is not eligible when the evaluation bundle's `merge_artifact_scan` is missing, malformed, mis-bound, or names a path. `container/promote.sh` still exits 48 before fast-forward. See `specs/amendments/unresolved-merge-artifact-v1.md`.
-- A completed scan with `paths: []` is the evaluation zone's statement, not a blob the authority read. The authority may permit that statement even when the tree contains markers. The promotion container is the check that refuses the write. Absence of markers is not proof that the edits agree.
-- The resolver does not evaluate, permit, or promote. `live-e2e` is the control-plane caller, and it was not executed.
-- An empty republish, used when the first push is not observed, is a new SHA. The composition record's candidate SHA is updated to that republish in the runner result. If a record was stored for the pre-republish SHA, the republish is a different candidate and needs its own evaluation.
-- Sub-agents share one machine and one fork. Worktrees stop them editing one directory at the same time. They are not separate microVMs. A sub-agent command can still read the parent repo's objects.
-- TheUstad checks that HEAD is the frozen baseline and the worktree is clean before combine. It does not score the composed or resolved tree.
-- Conflict classification stored by the authority is only `textual-line-overlap`. Other overlap kinds are not a recorded class.
-- WorkClaim fields were not extended. The graph reads claims, contenders, conflict reports, and the composition record. It is one HTML page, not a second database.
+- A fork-crew `CONFLICTED` result has **no candidate SHA**. Conflict-marker trees are
+  not normal promotable output. A resolver produces a new SHA, which must still be
+  evaluated before permit/promotion.
+- The promotion Container independently scans for unresolved merge-marker artifacts;
+  it does not rely only on the evaluator's statement.
+- An empty republish used to recover a missed first subscription event is a new SHA and
+  must be treated as a new candidate state.
+- TheUstad's competition gate verifies the parent fork is still at the frozen baseline
+  with a clean worktree before composition. It does **not** verify the combined
+  candidate and is not described as a general-purpose semantic code judge.
 
-## Evidence and promotion
+## Public endpoints / trust boundaries
 
-- `submitEvaluation` does not recompute `bundle_hash`. The verdict seam does. A stored bundle with a bad hash is ineligible. The evaluation domain is the trust point for admission flags.
-- The demo fixture's authority check refuses a contributing SHA. It does not execute `test/integration/check.js`.
-- The default demo roster check does not run Agentfleet. `assertFleetRoster` reads `configs/git4agents-demo-composition.yaml` for `parent`, `sub-api`, `sub-ui`, and `sub-test`, in that order, with bounded paths, and pairs it with `configs/demo-composition.json`. `fleet validate` runs only when `MADGRIX_FLEET_BIN` is a non-empty string, and then only as a roster cross-check. It does not execute the sub-agents. An older fleet that omits `summary.agent_ids` fails only that explicit cross-check. The sibling contender swarm (`configs/git4agents-contenders.yaml` and the non-fork path in `scripts/live-e2e.ts`) still needs Agentfleet `summary.agent_ids` or `MADGRIX_AGENT_IDS`. A live run is **NOT VERIFIED**.
-- Queue idempotency is tested with in-memory delivery. A live redelivery was not observed.
-- Canonical writes in tests are local git or FakeArtifacts. The live fork token's inability to push the canonical repo was not observed on Artifacts.
-- Offline verify trusts the pinned key the operator passes. A bundle that carries a different key does not select that key. This was tested locally, including the slice harness.
+- `GET /tasks/:id/ledger` and the permit-attestation verification route are public by
+  design.
+- Agent, control, and evaluation mutation routes require their respective credentials.
+- Only the promotion path receives canonical write authority.
+- Secret values are not committed to the repository.
 
-## Developer environment
-
-- The supported competition suite is Linux or WSL2, Node >= 24, and LF files. CI is Node 24 on Ubuntu for `main`, `codex/**`, and pull requests. It does not run on `competition/final`.
-- This Windows checkout has `core.autocrlf=true`. Git blobs are LF. `git archive` on this Git rewrites the export to CRLF unless it is run with `core.autocrlf=false` and `core.eol=lf`. WSL `bash` on the CRLF working tree fails `set -o pipefail`. Run container tests from an LF archive or a Linux checkout.
-- Windows Node v22.17.0 does not strip TypeScript by default. It is not the competition suite.
-- `docs/DEMO_SCRIPT.md` narrates 345 tests and 106 suites from the local Node 24 run on 2026-10-12. That count is this tree, and it is not a Cloudflare run. The fork-crew overlap behavior in that file, in `docs/GIT_PROBLEMS.md`, and in `specs/amendments/composition-result-v1.md` is CONFLICTED with no candidate commit. Conflict-marker commits are not ordinary output. The scan behavior is this file, `docs/COMPETITION_FINALIZATION.md`, `docs/COMPETITION_RED_TEAM.md`, `docs/SECURITY_BOUNDARIES.md`, and `specs/amendments/unresolved-merge-artifact-v1.md`. That older suite was not run on Cloudflare.
-
-## Deliberately not done
-
-No merge to `main`. No deploy. No push of `competition/final` in this integration. No new paid Cloudflare resource. No edit to `PROMOTION_PROTOCOL.md`, `EVALUATION_THREAT_MODEL.md`, or `CLOUDFLARE_RUNTIME_MODEL.md`. The scan from `competition/security` `9670893f36a986a59d153de4fbbf3ef10f1d9687` is in this branch. Collaboration `49e53c3205ceccebeb4ae84df84ecd591e966bc2` is on `origin/competition/collaboration`. It was not merged to `main` and was not run on Cloudflare. The later collaboration commit `16dbd7565966aa4160c0762a2a2eeb4e4a4e1378` was not cherry-picked.
+For the exact recorded live evidence see `docs/LIVE_RUN_RESULTS.md` and
+`docs/JOURNAL_2026-10-14_LIVE_RUN.md`.
