@@ -634,6 +634,7 @@ export function verifyFrozenBaseline(repo, baseline) {
 		const exit = result.error ? result.error.message : String(result.status ?? "signal");
 		throw new Error(`TheUstad blocked the combined commit: ${finalLine} (exit ${exit})`);
 	}
+	return { final: finalLine, exit: 0 };
 }
 
 /**
@@ -644,7 +645,7 @@ export function verifyFrozenBaseline(repo, baseline) {
  * @param {string} repo
  * @param {ReturnType<typeof loadForkCrew>} crew
  * @param {(sub: ReturnType<typeof loadForkCrew>["subs"][number], repo: string) => void | Promise<void>} [runSub]
- * @param {(repo: string, baseline: string) => void} [verify]
+ * @param {(repo: string, baseline: string) => void | { final: string, exit: number }} [verify]
  */
 export async function runCrewOnFork(repo, crew, runSub, verify = verifyFrozenBaseline) {
 	const baseline = git(repo, ["rev-parse", "HEAD"]).stdout.trim();
@@ -665,9 +666,11 @@ export async function runCrewOnFork(repo, crew, runSub, verify = verifyFrozenBas
 			rmSync(wt, { recursive: true, force: true });
 		}
 	}
-	verify(repo, baseline);
+	// The gate's FINAL line is carried in the result so the live log can print
+	// TheUstad's verdict (a throwing gate never reaches this point).
+	const theustad = verify(repo, baseline) ?? null;
 	const combined = combineSubagentBranches(repo, baseline, commits);
-	return { baseline, commits, ...combined };
+	return { baseline, commits, theustad, ...combined };
 }
 
 /**

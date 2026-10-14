@@ -74,6 +74,7 @@ import { verifierReportPayload } from "../src/lib/verifier-keys.ts";
 import { SELECTOR_POLICY_VERSION, type ReferenceReport } from "../src/lib/types.ts";
 import { loadContenderIds } from "./lib/agentfleet-slots.mjs";
 import { crewAgentIds, loadForkCrew } from "./lib/fork-crew.mjs";
+import { agentCounts, theustadVerdict } from "./lib/live-summary.mjs";
 import { cfEnv, minimalEnv, parseAgentEnvAllowlist, pickEnv } from "./lib/child-env.mjs";
 
 const env = process.env;
@@ -486,6 +487,16 @@ try {
 	);
 
 	console.error("[Git4agents] 6/9 reveal blind references and submit signed independent verdicts");
+	const counts = agentCounts(forkCrew, contenderRun);
+	const ustad = theustadVerdict(forkCrew, contenderRun);
+	console.error(
+		`[Git4agents] 6/9 TheUstad gate: ${ustad}` +
+			(forkCrew ? ` (combined ${candidates[0].candidate_sha})` : ""),
+	);
+	console.error(
+		`[Git4agents] 6/9 crew: concurrent_agents=${counts.concurrent_agents} ` +
+			`(parent=${counts.parent_agents}, sub_agents=${counts.sub_agents}), contenders=${counts.contenders}`,
+	);
 	await requestJson(`${baseUrl}/tasks/${encodeURIComponent(taskId)}/verifiers/labels`, {
 		token: controlToken,
 		body: { candidate_shas: candidates.map((c) => c.candidate_sha) },
@@ -625,7 +636,11 @@ try {
 				status: "MADGRIX_LIVE_E2E_OK",
 				public_url: baseUrl,
 				task_id: taskId,
-				concurrent_agents: candidates.length,
+				concurrent_agents: counts.concurrent_agents,
+				contenders: counts.contenders,
+				sub_agents: counts.sub_agents,
+				theustad: ustad,
+				combined_sha: forkCrew ? candidates[0].candidate_sha : null,
 				winner: winner.candidate_sha,
 				promoted_sha: promotion.promoted_sha,
 				permit_id: permit.permit_id,

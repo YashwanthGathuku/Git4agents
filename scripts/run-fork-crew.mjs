@@ -389,6 +389,7 @@ try {
 		overlap: crewRun.overlap,
 		conflict,
 		composition: compositionFor(compositionStatus, candidateSha),
+		theustad: crewRun.theustad,
 		subagent_commits: crewRun.commits.map((commit) => ({
 			id: commit.id,
 			role: commit.role,
