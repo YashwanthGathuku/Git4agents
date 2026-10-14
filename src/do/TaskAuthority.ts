@@ -38,6 +38,7 @@
  * the `(state, env)` constructor and `fetch(request)`.
  */
 
+import type { AncestryProof } from "../lib/ancestry-proof.ts";
 import {
 	AgentSecretError,
 	assignCandidateLabels,
@@ -229,17 +230,19 @@ export class TaskAuthority {
 		if (request.method === "POST" && path === "/event") {
 			const parsed = await readJsonBody(request);
 			if (!parsed.ok) return parsed.response;
-			const event = (parsed.body as { event?: QueuePushEvent }).event;
+			const body = parsed.body as { event?: QueuePushEvent; reconciliation?: AncestryProof };
+			const event = body.event;
 			if (!event || typeof event.repo !== "string" || typeof event.after !== "string") {
 				return json({ error: "invalid_event", detail: "body.event must be a QueuePushEvent" }, 400);
 			}
+			const reconciliation = body.reconciliation ?? null;
 			const ctx = await productionCtx();
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) {
 					return json({ error: "not_initialized" }, 404);
 				}
-				const result = await ingestQueueEvent(state, event, ctx);
+				const result = await ingestQueueEvent(state, event, ctx, { reconciliation });
 				await this.doState.storage.put(STATE_KEY, result.state);
 				// NOTE: effects are RETURNED, not executed. The caller
 				// (queue consumer / Workflow) executes them. The DO never

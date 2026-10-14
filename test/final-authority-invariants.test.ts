@@ -700,7 +700,19 @@ describe("P1-1 causal queue tip", () => {
 	});
 
 	it("the queue consumer acknowledges a reconciliation and does not throw", async () => {
-		for (const outcome of ["ACK_DUP", "APPLIED_NEW", "ALREADY_OBSERVED", "REQUIRES_RECONCILIATION", "REJECTED_UNKNOWN_REPO", "REJECTED_INVALID_EVENT"]) {
+		const authorityFetch = (outcome: string) => async (request: Request) => {
+			if (request.method === "GET") {
+				return new Response(JSON.stringify({ contenders: {} }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify({ outcome, effects: [], event_key: "k" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		};
+		for (const outcome of ["ACK_DUP", "APPLIED_NEW", "ALREADY_OBSERVED", "RECONCILED_NEW", "REQUIRES_RECONCILIATION", "REJECTED_UNKNOWN_REPO", "REJECTED_INVALID_EVENT"]) {
 			await worker.queue(
 				{
 					messages: [
@@ -715,13 +727,7 @@ describe("P1-1 causal queue tip", () => {
 				{
 					TASK_AUTHORITY: {
 						idFromName: (name: string) => ({ toString: () => name }),
-						get: () => ({
-							fetch: async () =>
-								new Response(JSON.stringify({ outcome, effects: [], event_key: "k" }), {
-									status: 200,
-									headers: { "content-type": "application/json" },
-								}),
-						}),
+						get: () => ({ fetch: authorityFetch(outcome) }),
 					},
 					ARTIFACTS: {},
 					PROMOTION_WORKFLOW: {},
@@ -734,13 +740,7 @@ describe("P1-1 causal queue tip", () => {
 				{
 					TASK_AUTHORITY: {
 						idFromName: (name: string) => ({ toString: () => name }),
-						get: () => ({
-							fetch: async () =>
-								new Response(JSON.stringify({ outcome: "APPLIED_BACKWARD", effects: [] }), {
-									status: 200,
-									headers: { "content-type": "application/json" },
-								}),
-						}),
+						get: () => ({ fetch: authorityFetch("APPLIED_BACKWARD") }),
 					},
 					ARTIFACTS: {},
 					PROMOTION_WORKFLOW: {},

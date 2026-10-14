@@ -375,7 +375,7 @@ const runOne = async (agentId) => {
 		if (subscription !== 'skipped') {
 			let applied = await pushWasApplied(contenderId, candidateSha, 45000);
 			if (!applied) {
-				console.error(`[Git4agents] ${agentId} push was not applied; pushing again now that the subscription is live`);
+				console.error(`[Git4agents] ${agentId} first push not observed; creating a republish commit to obtain a later Artifact event; TaskAuthority may reconcile forward ancestry`);
 				const name = process.env.GIT_AUTHOR_NAME ?? `MADGRIX ${agentId}`;
 				const email = process.env.GIT_AUTHOR_EMAIL ?? `${agentId.replace(/[^A-Za-z0-9]/g, "")}@madgrix.invalid`;
 				await run("git", ["-c", `user.name=${name}`, "-c", `user.email=${email}`, "commit", "--allow-empty", "-m", `MADGRIX contender republish: ${agentId}`], { cwd: dir });

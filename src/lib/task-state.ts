@@ -37,6 +37,7 @@ import { classifyPair, validateClaim, type ClaimInput } from "./claims.ts";
 import { authorityRefusal } from "./authority-refusal.ts";
 import { compositionEvidenceError, compositionMemberShas, promotableCompositionSha } from "./composition-authority.ts";
 import { mergeArtifactAdmissionRefuses, reportedMergeArtifactPaths } from "./merge-artifacts.ts";
+import { validateAncestryProof, type AncestryProof } from "./ancestry-proof.ts";
 import { verifyReveal } from "./verifiers.ts";
 import {
 	importEd25519PublicKey,
@@ -296,9 +297,38 @@ export type IngestOutcome =
 	| "ACK_DUP"
 	| "APPLIED_NEW"
 	| "ALREADY_OBSERVED"
+	| "RECONCILED_NEW"
 	| "REQUIRES_RECONCILIATION"
+	| "RETRY_RECONCILIATION"
 	| "REJECTED_UNKNOWN_REPO"
 	| "REJECTED_INVALID_EVENT";
+
+export type QueuePushClass =
+	| { kind: "invalid" }
+	| { kind: "unknown_repo" }
+	| { kind: "already_observed"; tip: string }
+	| { kind: "unplaced" }
+	| { kind: "fast"; tip: string }
+	| { kind: "gap"; tip: string };
+
+/**
+ * The same placement rules as ingestQueueEvent, without recording the event.
+ * The Worker uses this to decide whether to read Artifacts before the
+ * authoritative transition. A missing `contenders` map is an unknown repo,
+ * not a throw: a queue handler must be able to classify a partial read.
+ */
+export function classifyQueuePush(state: AuthorityState, event: QueuePushEvent): QueuePushClass {
+	if (!isQueuePushShape(event) || invalidContenderPush(event)) return { kind: "invalid" };
+	const contenders = state.contenders;
+	if (!contenders || typeof contenders !== "object") return { kind: "unknown_repo" };
+	const contenderId = Object.keys(contenders).find((id) => contenders[id]?.fork_repo === event.repo);
+	if (contenderId === undefined) return { kind: "unknown_repo" };
+	const tip = observedTip(contenders[contenderId]);
+	if (tip === null) return { kind: "unplaced" };
+	if (event.after === tip) return { kind: "already_observed", tip };
+	if (event.before === tip) return { kind: "fast", tip };
+	return { kind: "gap", tip };
+}
 
 function isQueuePushShape(event: unknown): event is QueuePushEvent {
 	if (!event || typeof event !== "object") return false;
@@ -335,13 +365,21 @@ function observedTip(contender: ContenderRecord): string | null {
 	return null;
 }
 
+export interface QueueIngestOptions {
+	/**
+	 * Present only when the Worker has already read Artifacts. Absent for the
+	 * causal fast path and for every existing caller. A proof is not taken
+	 * from the Queue message.
+	 */
+	reconciliation?: AncestryProof | null;
+}
+
 /**
- * Ingest a Cloudflare Queue push event (spec 5 §3; specs/amendments/queue-causal-tip-v1.md).
+ * Ingest a Cloudflare Queue push event (spec 5 §3; specs/amendments/queue-causal-tip-v1.md;
+ * specs/amendments/queue-ancestry-reconciliation-v1.md).
  * event_key is derived from content only — never from Queue metadata.
  * Delivery is at-least-once and unordered. A different event_key is not a
  * duplicate, and it is not evidence that `after` is the newest tip.
- *
- * The ingestion boundary has before/after only. It does not guess ancestry.
  *
  * - Seen key → ACK_DUP (idempotent; no state change, no effects).
  * - Empty, whitespace-only, or zero-object `after`, or a push that is not a
@@ -349,14 +387,20 @@ function observedTip(contender: ContenderRecord): string | null {
  *   recorded so a redelivery is ACK_DUP (specs/amendments/queue-nonempty-tip-v1.md).
  * - Unknown repo → REJECTED_UNKNOWN_REPO. That is not an out-of-order delivery.
  * - Known repo, `after` is already the observed tip → ALREADY_OBSERVED. The tip stays.
- * - Known repo, `before` is the observed tip → APPLIED_NEW. The tip becomes `after`.
- * - Known repo, `before` is anything else → REQUIRES_RECONCILIATION. The tip stays.
- *   A later fast-forward whose `before` is the tip may still advance it.
+ * - Known repo, `before` is the observed tip, and no closed refusal proof is
+ *   attached → APPLIED_NEW. The tip becomes `after`.
+ * - Known repo, `before` is not the tip, with a forward proof that the CURRENT
+ *   tip is an ancestor of `after` → RECONCILED_NEW. The tip becomes `after`.
+ *   The missing push is not invented. The ledger kind is `queue_event_reconciled`.
+ * - A proof whose observed tip is not the current tip, or whose edges do not
+ *   validate → RETRY_RECONCILIATION. The key is NOT recorded.
+ * - Otherwise → REQUIRES_RECONCILIATION. The tip stays. The key is recorded.
  */
 export async function ingestQueueEvent(
 	state: AuthorityState,
 	event: QueuePushEvent,
 	ctx: Ctx,
+	options?: QueueIngestOptions,
 ): Promise<{ state: AuthorityState; outcome: IngestOutcome; effects: Effect[]; event_key: string }> {
 	const shaped = isQueuePushShape(event);
 	const event_key = await ctx.sha256Hex(
@@ -408,6 +452,66 @@ export async function ingestQueueEvent(
 			ctx,
 		);
 		return { state: s2, outcome: "ALREADY_OBSERVED", effects: [], event_key };
+	}
+	const proof = options?.reconciliation ?? null;
+	if (proof !== null) {
+		// The key stays unseen until the proof matches THIS tip. A stale proof
+		// must be recomputed against the tip the next attempt reads.
+		if (tip === null || proof.observed_tip !== tip || proof.target_after !== event.after) {
+			return { state, outcome: "RETRY_RECONCILIATION", effects: [], event_key };
+		}
+		const verdict = validateAncestryProof(proof);
+		if (!verdict.ok) {
+			return { state, outcome: "RETRY_RECONCILIATION", effects: [], event_key };
+		}
+		if (verdict.relation === "closed_refusal") {
+			const s2 = await appendLedger(
+				withKey,
+				"queue_event_requires_reconciliation",
+				{
+					event_key,
+					contender_id: contenderId,
+					repo: event.repo,
+					ref: event.ref,
+					before: event.before,
+					after: event.after,
+					latest_commit: contender.latest_commit ?? null,
+					observed_tip: tip,
+					proof_digest: await ctx.sha256Hex(canonicalJson(proof)),
+					proof_path_length: proof.path.length,
+				},
+				ctx,
+			);
+			return { state: s2, outcome: "REQUIRES_RECONCILIATION", effects: [], event_key };
+		}
+		const updated = { ...contender, latest_commit: event.after };
+		const next: AuthorityState = { ...withKey, contenders: { ...withKey.contenders, [contenderId]: updated } };
+		if (event.before === tip) {
+			const s2 = await appendLedger(
+				next,
+				"queue_event_applied",
+				{ event_key, contender_id: contenderId, before: event.before, after: event.after },
+				ctx,
+			);
+			return { state: s2, outcome: "APPLIED_NEW", effects: [], event_key };
+		}
+		const s2 = await appendLedger(
+			next,
+			"queue_event_reconciled",
+			{
+				event_key,
+				contender_id: contenderId,
+				repo: event.repo,
+				ref: event.ref,
+				observed_tip: tip,
+				before: event.before,
+				after: event.after,
+				proof_digest: await ctx.sha256Hex(canonicalJson(proof)),
+				proof_path_length: proof.path.length,
+			},
+			ctx,
+		);
+		return { state: s2, outcome: "RECONCILED_NEW", effects: [], event_key };
 	}
 	if (tip === null || event.before !== tip) {
 		const s2 = await appendLedger(
