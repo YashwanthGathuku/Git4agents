@@ -210,3 +210,24 @@ intelligence.
   asks to "run interactively" and changes nothing. Always verify a rotation
   with a real authenticated request afterward (expect 400s, not 401s).
 - Secret rotations take ~30s to propagate to the Worker.
+
+## Chapter 8 — Run 4: the recorded run (14:19–14:21 ET)
+
+The operator asked for a genuine recording of the run — not a narrated
+summary. Run 4 was executed under `script(1)` with full timing capture.
+
+| Item | Value |
+|---|---|
+| Task | `task_79b1f9d610e94d8e95daa503` |
+| Baseline | `b3ee4c862dcc6996678dc25c1de5c49b060fa9d4` (run 3's promotion) |
+| Combined / promoted SHA | `d55332b544992a2e033ca03fa54972c5283eef73` |
+| TheUstad | FINAL VERIFIED |
+| Result | `MADGRIX_LIVE_E2E_OK`, offline bundle `VERIFIED` |
+
+`starter-repo` main confirmed at `d55332b5` via `git ls-remote` afterward —
+the fourth consecutive promotion, each one's baseline the previous one's
+promotion.
+
+Artifacts: the raw typescript (`~/workspace/madgrix-live-run/video/rec4/`)
+and the replay video (`~/workspace/madgrix-live-run/video/git4agents-live-run4.mp4`,
+88s, idle periods compressed, labeled on-screen).

@@ -74,6 +74,7 @@ any step.
 | 1 | 2026-10-13 | `task_0090714a…` | `3b71d3a` | FINAL VERIFIED | VERIFIED |
 | 2 | 2026-10-14 | `task_6cdb2087…` | `fc9c1e7` | FINAL VERIFIED | VERIFIED |
 | 3 | 2026-10-14 | `task_735cca4a…` | `b3ee4c86` | FINAL VERIFIED | VERIFIED |
+| 4 | 2026-10-14 | `task_79b1f9d6…` | `d55332b5` | FINAL VERIFIED | VERIFIED |
 
 Each run promoted onto `starter-repo` main; each run's baseline was the
 previous run's promotion. The authorized SHA and the shipped SHA were
@@ -82,7 +83,7 @@ against the Artifacts remote).
 
 ## Honest limits
 
-- Three runs are evidence, not a statistic.
+- Four runs are evidence, not a statistic.
 - The demo sub-agents run scripted commands, not language models. What is
   demonstrated is coordination and enforcement, not agent intelligence.
 - The ~30 min is wall time dominated by queue/evaluation polling, not
