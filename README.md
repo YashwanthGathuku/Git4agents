@@ -136,6 +136,20 @@ except where a line says otherwise.
   Two recorded runs are evidence, not a reliability claim. Each run promotes onto
   `starter-repo` main, so the next run must set `MADGRIX_BASELINE_COMMIT` to the
   current main (the runner refuses a fork that is not at the baseline).
+- **Third run, with/without comparison** (2026-10-14, ~14:05 ET, branch `grok/final-live`):
+  task `task_735cca4ac580564e368e4574`, baseline `fc9c1e7`, crew of 3, TheUstad
+  `FINAL VERIFIED`, combined = promoted `b3ee4c862dcc6996678dc25c1de5c49b060fa9d4`,
+  offline bundle `VERIFIED`, `starter-repo` main confirmed at the promoted SHA via
+  `git ls-remote`. The same code changes were also done as **plain git with no
+  protocol** (fork, two commits, octopus merge, push) against a scratch Artifacts
+  repo: **~7.6s** of machine time — and zero guarantees (no scope enforcement, no
+  evaluation, no verdict, no exact-state binding, no signatures; the real cost is
+  the human review that follows). The governed run took **~30 min, fully automated,
+  zero human in the loop**. The delta is the price of the guarantees, and it
+  parallelizes — human review does not. Notably, the day's first attempt was
+  *rejected* by the security gate (claim scope missed `.madgrix/**`); the gate that
+  passed run 3 is the gate that rejected attempt 1. Full comparison:
+  `docs/LIVE_RUN_RESULTS.md`; narrative: `docs/JOURNAL_2026-10-14_LIVE_RUN.md`.
 - **Workflows.** `PromotionWorkflow` has only run against a stand-in binding. The
   platform's instance-id rules, retry timing, `restart()` of an errored instance and
   `terminate()` of a running one are assumed from the runtime types, not observed.
