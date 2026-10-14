@@ -63,6 +63,7 @@ describe("MADGRIX stateless MCP adapter", () => {
 		assert.equal(response.status, 200);
 		assert.deepEqual(response.body.result.supportedVersions, [MODERN]);
 		assert.equal(response.body.result.capabilities.tools.listChanged, false);
+		assert.equal(response.body.result.resultType, "complete", "2026-07-28 requires a wire result discriminator");
 		assert.equal(response.body.result._meta["io.modelcontextprotocol/serverInfo"].name, "madgrix");
 		assert.match(response.body.result.instructions, /Claim work before coding/);
 	});
@@ -78,11 +79,20 @@ describe("MADGRIX stateless MCP adapter", () => {
 		assert.equal(response.body.result.protocolVersion, "2025-11-25");
 		assert.equal(response.body.result.serverInfo.name, "madgrix");
 		assert.equal(response.body.result.capabilities.tools.listChanged, false);
+		assert.equal(response.body.result.resultType, undefined, "legacy wire must not receive the modern discriminator");
+	});
+
+	it("does not expose legacy ping in the 2026-07-28 era", async () => {
+		const response = await mcp({}, "ping", {}, { modern: true });
+		assert.equal(response.status, 200);
+		assert.equal(response.body.error.code, -32601);
+		assert.match(response.body.error.message, /ping/);
 	});
 
 	it("publishes only agent-safe tools and no canonical-write or decision tool", async () => {
 		const response = await mcp({}, "tools/list", {}, { modern: true });
 		assert.equal(response.status, 200);
+		assert.equal(response.body.result.resultType, "complete");
 		const names = response.body.result.tools.map((tool: { name: string }) => tool.name);
 		assert.deepEqual(names, [
 			"inspect_task",
@@ -119,6 +129,7 @@ describe("MADGRIX stateless MCP adapter", () => {
 			{ modern: true },
 		);
 		assert.equal(response.status, 200, "MCP protocol call itself succeeds so the tool can return its governed error");
+		assert.equal(response.body.result.resultType, "complete");
 		assert.equal(response.body.result.isError, true);
 		assert.equal(toolData(response.body).http_status, 401);
 		assert.equal(toolData(response.body).data.error, "task_context_auth_required");
