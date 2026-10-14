@@ -66,6 +66,7 @@ import type { SimulatedGit } from "../lib/artifacts-port.ts";
 import { FakeArtifacts } from "../lib/fake-artifacts.ts";
 import { joinHashParts, randomHex, sha256Hex } from "../lib/canonical.ts";
 import { contenderRepoName, normalizeArtifactQueueBody } from "../lib/artifact-events.ts";
+import { planQueueIngest } from "../lib/queue-reconcile.ts";
 import type {
 	AuthorityState,
 	ContenderRecord,
@@ -1809,35 +1810,70 @@ async function route(request: Request, env: Env): Promise<Response> {
  * Returns normally to ACK; throws only on genuine failure so the message
  * is redelivered (spec 5 §10: MUST NOT drop the event).
  */
-export async function queue(batch: QueueBatchLike, env: Env): Promise<void> {
+const QUEUE_STALE_PROOF_ATTEMPTS = 2;
+
+/**
+ * One Queue message. A causal gap is proved from Artifacts before POST /event.
+ * RETRY_RECONCILIATION and an unreadable cone throw, so the Queue redelivers
+ * the same event_key while it is still unseen. RECONCILED_NEW is an ack:
+ * the tip moved to the delivered commit, not to a missing predecessor.
+ */
+async function ingestQueuedPush(env: Env, taskId: string, event: QueuePushEvent): Promise<void> {
 	const port = productionPort(env);
-	for (const msg of batch.messages) {
-		const routed = normalizeArtifactQueueBody(msg.body);
-		// Event subscriptions may share a queue with unrelated Artifacts
-		// lifecycle events or pushes to baseline/canonical repositories.
-		// Those are intentionally acknowledged without mutating task state.
-		if (routed === null) continue;
-		const { task_id, event } = routed;
-		const res = await doRpc(taskStub(env, task_id), "/event", { body: { event } });
+	let repoRead: Promise<ArtifactsRepo> | null = null;
+	const readCommit = async (hash: string) => {
+		if (repoRead === null) repoRead = port.get(event.repo);
+		const repo = await repoRead;
+		const commit = await repo.readCommit(hash);
+		if (!commit) return null;
+		return { hash: commit.hash, parents: commit.parents };
+	};
+	for (let attempt = 0; attempt < QUEUE_STALE_PROOF_ATTEMPTS; attempt++) {
+		const read = await readTaskState(env, taskId);
+		if (!read.ok) {
+			throw new Error(`queue: task state unavailable for ${taskId}: HTTP ${read.status}`);
+		}
+		const plan = await planQueueIngest(read.state, event, readCommit);
+		if (plan.action === "retry") {
+			throw new Error(`queue: ancestry ${plan.reason} for task ${taskId}`);
+		}
+		const res = await doRpc(taskStub(env, taskId), "/event", {
+			body: plan.reconciliation === undefined ? { event } : { event, reconciliation: plan.reconciliation },
+		});
 		if (!res.ok) {
-			throw new Error(`queue: DO /event failed for task ${task_id}: HTTP ${res.status}`);
+			throw new Error(`queue: DO /event failed for task ${taskId}: HTTP ${res.status}`);
 		}
 		const { outcome, effects } = res.body as {
 			outcome: string;
 			effects: Effect[];
 			event_key: string;
 		};
+		if (outcome === "RETRY_RECONCILIATION") continue;
 		if (
 			outcome !== "ACK_DUP" &&
 			outcome !== "APPLIED_NEW" &&
 			outcome !== "ALREADY_OBSERVED" &&
+			outcome !== "RECONCILED_NEW" &&
 			outcome !== "REQUIRES_RECONCILIATION" &&
 			outcome !== "REJECTED_UNKNOWN_REPO" &&
 			outcome !== "REJECTED_INVALID_EVENT"
 		) {
-			throw new Error(`queue: unexpected outcome ${outcome} for task ${task_id}`);
+			throw new Error(`queue: unexpected outcome ${outcome} for task ${taskId}`);
 		}
 		await executeEffects(port, effects ?? [], env.PROMOTION_WORKFLOW);
+		return;
+	}
+	throw new Error(`queue: reconciliation proof stayed stale for task ${taskId}`);
+}
+
+export async function queue(batch: QueueBatchLike, env: Env): Promise<void> {
+	for (const msg of batch.messages) {
+		const routed = normalizeArtifactQueueBody(msg.body);
+		// Event subscriptions may share a queue with unrelated Artifacts
+		// lifecycle events or pushes to baseline/canonical repositories.
+		// Those are intentionally acknowledged without mutating task state.
+		if (routed === null) continue;
+		await ingestQueuedPush(env, routed.task_id, routed.event);
 	}
 }
 
