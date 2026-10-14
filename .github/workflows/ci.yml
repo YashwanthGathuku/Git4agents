@@ -48,3 +48,5 @@ jobs:
         run: npm run headmove
       - name: Harness validation benchmark
         run: npm run bench
+      - name: Canonicality attack lab
+        run: npm run attack:lab
