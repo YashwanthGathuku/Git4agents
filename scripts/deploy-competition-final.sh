@@ -5,7 +5,8 @@ set -Eeuo pipefail
 #
 # This script intentionally deploys only a clean checkout that exactly matches
 # origin/grok/final-live, then proves the judge-facing run-4 Mission Control is
-# public while other task graphs remain authenticated.
+# public, MCP is live with agent-safe tools, and other task graphs remain
+# authenticated.
 #
 # Requirements: Linux/WSL, Node >= 24, git, curl, cf CLI authenticated to the
 # Cloudflare account that already hosts the `madgrix` Worker and its secrets.
@@ -15,6 +16,7 @@ WORKER_NAME="${MADGRIX_WORKER_NAME:-madgrix}"
 BASE_URL="${MADGRIX_BASE_URL:-https://madgrix.ygathuku96.workers.dev}"
 PUBLIC_TASK_ID="task_79b1f9d610e94d8e95daa503"
 PROMOTED_SHA="d55332b544992a2e033ca03fa54972c5283eef73"
+MCP_PROTOCOL_VERSION="2026-07-28"
 REQUIRED_SECRETS=(
   CONTROL_SERVICE_TOKEN
   AGENT_SERVICE_TOKEN
@@ -92,6 +94,39 @@ HEALTH_STATUS="$(curl -sS -o "$TMP_DIR/health" -w '%{http_code}' "$BASE_URL/heal
 [[ "$HEALTH_STATUS" == "200" ]] || fail "/health returned HTTP $HEALTH_STATUS"
 printf 'health: HTTP %s\n' "$HEALTH_STATUS"
 
+note "Checking stateless MCP discovery on the deployed Worker"
+MCP_DISCOVER_STATUS="$(curl -sS -o "$TMP_DIR/mcp-discover" -w '%{http_code}' \
+  -X POST "$BASE_URL/mcp" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json' \
+  -H "MCP-Protocol-Version: $MCP_PROTOCOL_VERSION" \
+  -H 'Mcp-Method: server/discover' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}')"
+[[ "$MCP_DISCOVER_STATUS" == "200" ]] || fail "MCP server/discover returned HTTP $MCP_DISCOVER_STATUS"
+grep -Fq '"2026-07-28"' "$TMP_DIR/mcp-discover" || fail "MCP discovery does not advertise 2026-07-28"
+grep -Fq '"resultType":"complete"' "$TMP_DIR/mcp-discover" || fail "MCP discovery is missing the modern complete result discriminator"
+grep -Fq '"io.modelcontextprotocol/serverInfo"' "$TMP_DIR/mcp-discover" || fail "MCP discovery is missing server identity metadata"
+printf 'mcp discovery: HTTP %s\n' "$MCP_DISCOVER_STATUS"
+
+note "Checking deployed MCP tool surface is agent-safe"
+MCP_TOOLS_STATUS="$(curl -sS -o "$TMP_DIR/mcp-tools" -w '%{http_code}' \
+  -X POST "$BASE_URL/mcp" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json' \
+  -H "MCP-Protocol-Version: $MCP_PROTOCOL_VERSION" \
+  -H 'Mcp-Method: tools/list' \
+  --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}')"
+[[ "$MCP_TOOLS_STATUS" == "200" ]] || fail "MCP tools/list returned HTTP $MCP_TOOLS_STATUS"
+for tool in inspect_task inspect_work_graph check_clearance claim_work open_contender read_ledger verify_permit; do
+  grep -Fq "\"name\":\"$tool\"" "$TMP_DIR/mcp-tools" || fail "deployed MCP tool is missing: $tool"
+done
+for forbidden in promote verdict evidence composition rebase finalize issue_permit; do
+  if grep -Fq "\"name\":\"$forbidden\"" "$TMP_DIR/mcp-tools"; then
+    fail "privileged operation unexpectedly exposed as MCP tool: $forbidden"
+  fi
+done
+printf 'mcp tools: HTTP %s · 7 agent-safe tools · no privileged canonical-write tool\n' "$MCP_TOOLS_STATUS"
+
 note "Checking root exposes the configured read-only demo"
 ROOT_STATUS="$(curl -sS -o "$TMP_DIR/root" -w '%{http_code}' "$BASE_URL/")"
 [[ "$ROOT_STATUS" == "200" ]] || fail "/ returned HTTP $ROOT_STATUS"
@@ -116,5 +151,5 @@ PRIVATE_STATUS="$(curl -sS -o "$TMP_DIR/private" -w '%{http_code}' "$BASE_URL/ta
 printf 'non-demo graph auth boundary: HTTP %s\n' "$PRIVATE_STATUS"
 
 note "FINAL DEPLOYMENT VERIFIED"
-printf 'branch: %s\ncommit: %s\nworker: %s\npublic demo: %s\n' \
-  "$DEPLOY_BRANCH" "$LOCAL_HEAD" "$BASE_URL" "$GRAPH_URL"
+printf 'branch: %s\ncommit: %s\nworker: %s\nmcp: %s/mcp\npublic demo: %s\n' \
+  "$DEPLOY_BRANCH" "$LOCAL_HEAD" "$BASE_URL" "$BASE_URL" "$GRAPH_URL"
