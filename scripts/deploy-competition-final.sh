@@ -11,9 +11,16 @@ set -Eeuo pipefail
 # Cloudflare account that already hosts the `madgrix` Worker and its secrets.
 
 DEPLOY_BRANCH="${MADGRIX_DEPLOY_BRANCH:-grok/final-live}"
+WORKER_NAME="${MADGRIX_WORKER_NAME:-madgrix}"
 BASE_URL="${MADGRIX_BASE_URL:-https://madgrix.ygathuku96.workers.dev}"
 PUBLIC_TASK_ID="task_79b1f9d610e94d8e95daa503"
 PROMOTED_SHA="d55332b544992a2e033ca03fa54972c5283eef73"
+REQUIRED_SECRETS=(
+  CONTROL_SERVICE_TOKEN
+  AGENT_SERVICE_TOKEN
+  EVALUATION_SERVICE_TOKEN
+  AUTHORITY_SIGNING_KEY
+)
 
 fail() {
   printf 'DEPLOY BLOCKED: %s\n' "$*" >&2
@@ -22,6 +29,18 @@ fail() {
 
 note() {
   printf '\n==> %s\n' "$*" >&2
+}
+
+check_required_secret_names() {
+  local output
+  output="$(cf workers secrets list --script-name "$WORKER_NAME" 2>&1)" || {
+    printf '%s\n' "$output" >&2
+    fail "could not list secret names for Worker $WORKER_NAME"
+  }
+  for secret in "${REQUIRED_SECRETS[@]}"; do
+    grep -Fq "$secret" <<<"$output" || fail "required Worker secret name is missing: $secret"
+  done
+  printf 'required secret names: present (%s)\n' "${#REQUIRED_SECRETS[@]}"
 }
 
 for bin in git node curl cf; do
@@ -48,19 +67,22 @@ REMOTE_HEAD="$(git rev-parse "origin/$DEPLOY_BRANCH")"
 [[ "$LOCAL_HEAD" == "$REMOTE_HEAD" ]] || fail "local HEAD $LOCAL_HEAD is not origin/$DEPLOY_BRANCH $REMOTE_HEAD"
 printf 'Deploy candidate: %s @ %s\n' "$DEPLOY_BRANCH" "$LOCAL_HEAD"
 
-note "Checking Cloudflare authentication and required queue visibility"
+note "Checking Cloudflare authentication, queue visibility, and required secret names"
 cf auth whoami >/dev/null
 cf queues list >/dev/null
+check_required_secret_names
 
 note "Cloudflare dry-run (build + configuration validation; no upload)"
 cf deploy --dry-run
 
 note "Deploying exact competition tree"
-printf 'The cf CLI may ask you to confirm the plan. Review it and approve only if the Worker is madgrix.\n' >&2
+printf 'The cf CLI may ask you to confirm the plan. Review it and approve only if the Worker is %s.\n' "$WORKER_NAME" >&2
 cf deploy \
   --message "Cloudflare Git competition final ${LOCAL_HEAD}" \
-  --tag "competition-final" \
   --containers-rollout immediate
+
+note "Confirming required secret bindings still exist after deployment"
+check_required_secret_names
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
