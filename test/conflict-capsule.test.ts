@@ -19,8 +19,8 @@ function conflicted(): CompositionRecord {
 				path: "src/router.ts",
 				classification: "textual-line-overlap",
 				sides: [
-					{ agent_id: "ui", role: "ui", intent: "change route UI", sha: "sha-b", excerpt: "return ui" },
-					{ agent_id: "api", role: "api", intent: "change route", sha: "sha-a", excerpt: "return api" },
+					{ agent_id: "ui", role: "ui", intent: "change route UI", sha: "sha-b", excerpt: "PRIVATE UI SOURCE" },
+					{ agent_id: "api", role: "api", intent: "change route", sha: "sha-a", excerpt: "PRIVATE API SOURCE" },
 				],
 			},
 		],
@@ -29,7 +29,7 @@ function conflicted(): CompositionRecord {
 }
 
 describe("Conflict Capsule", () => {
-	it("turns conflict state into a stable content-addressed protocol object", async () => {
+	it("turns conflict state into a stable content-addressed protocol object without exporting raw source excerpts", async () => {
 		const a = await buildConflictCapsule("task-hash", conflicted());
 		const reordered = conflicted();
 		reordered.contributing_shas.reverse();
@@ -41,6 +41,7 @@ describe("Conflict Capsule", () => {
 		assert.equal(a.resolution_requirements.old_authority_invalid, true);
 		assert.equal(a.conflicts[0].path, "src/router.ts");
 		assert.match(a.conflicts[0].sides[0].excerpt_sha256, /^[0-9a-f]{64}$/);
+		assert.doesNotMatch(JSON.stringify(a), /PRIVATE .* SOURCE/);
 	});
 
 	it("refuses to capsule a promotable composition", async () => {

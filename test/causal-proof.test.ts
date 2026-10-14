@@ -36,7 +36,7 @@ const verdict: VerdictRecord = {
 	state: "ACCEPT",
 	candidate_shas: ["candidate"],
 	evidence_hashes: [evaluation.bundle_hash],
-	reasons: ["eligible"],
+	reasons: ["PRIVATE VERDICT REASON"],
 	policy_hash: "4".repeat(64),
 	selector_policy_version: "seam-policy/0.1.0",
 	timestamp: "2026-10-14T00:02:00.000Z",
@@ -61,7 +61,7 @@ const permit: PermitRecord = {
 };
 
 describe("Causal Proof Graph", () => {
-	it("answers why a governed SHA may become canonical with a stable root", async () => {
+	it("answers why a governed SHA may become canonical with a stable root without exporting free-text verdict reasons", async () => {
 		const state = createAuthority(task);
 		state.evaluations.candidate = evaluation;
 		state.verdicts.push(verdict);
@@ -76,5 +76,6 @@ describe("Causal Proof Graph", () => {
 		assert.ok(graph.nodes.some((n) => n.type === "canonical"));
 		assert.ok(graph.edges.some((e) => e.relation === "authorizes-canonicalization"));
 		assert.ok(graph.edges.some((e) => e.relation === "ships-exact-state"));
+		assert.doesNotMatch(JSON.stringify(graph), /PRIVATE VERDICT REASON/);
 	});
 });

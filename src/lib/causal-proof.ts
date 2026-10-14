@@ -5,7 +5,8 @@
  * Git gives ancestry. This graph gives authority causality: task intent → work
  * claims → composition → evaluation → verdict → CanonCap → promotion proof.
  * It is a read-only projection over TaskAuthority state; it never decides
- * eligibility and never contains secrets.
+ * eligibility and never contains credentials, secrets or free-text verifier
+ * reasoning.
  */
 
 import { canonicalJson, sha256Hex as defaultSha256Hex } from "./canonical.ts";
@@ -178,7 +179,6 @@ export async function buildCausalProofGraph(
 				policy_hash: verdict.policy_hash,
 				selector_policy_version: verdict.selector_policy_version,
 				winner_sha: verdict.winner_sha,
-				reasons: verdict.reasons,
 			},
 			sha256Hex,
 		);

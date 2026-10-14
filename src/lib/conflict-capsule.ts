@@ -17,7 +17,7 @@ export interface ConflictCapsuleSide {
 	role: string;
 	intent: string;
 	sha: string;
-	excerpt: string;
+	/** Digest of the authority-stored excerpt; raw source is not exported. */
 	excerpt_sha256: string;
 }
 
@@ -64,7 +64,6 @@ export async function buildConflictCapsule(
 				role: side.role,
 				intent: side.intent,
 				sha: side.sha,
-				excerpt: side.excerpt,
 				excerpt_sha256: await sha256Hex(side.excerpt),
 			});
 		}
