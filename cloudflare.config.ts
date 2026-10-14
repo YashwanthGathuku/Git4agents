@@ -1,5 +1,5 @@
 import { bindings, defineConfig, defineContainer, exports, triggers } from "cf/config";
-import * as entrypoint from "./src/worker/index.ts" with { type: "cf-worker" };
+import * as entrypoint from "./src/worker/entrypoint.ts" with { type: "cf-worker" };
 
 const promotionContainer = defineContainer({
 	name: "madgrix-promotion",
@@ -13,8 +13,9 @@ export default defineConfig({
 		name: "madgrix",
 		compatibilityDate: "2026-10-01",
 		entrypoint,
-		// The task-authority Durable Object class is exported from the
-		// entrypoint module (src/worker/index.ts re-exports TaskAuthority).
+		// The task-authority Durable Object class is re-exported by the
+		// entrypoint wrapper from src/worker/index.ts. The wrapper only mounts
+		// /mcp; every MCP tool delegates back through the same core router.
 		// sqlite storage: the DO runs every state transition inside a
 		// storage transaction (spec 5 §4).
 		exports: {
