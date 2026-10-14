@@ -13,7 +13,7 @@ Everything here is **deterministic and model-free**. No language model is called
 | Reduce: repo map, cross-module edges, tests that import a module | **Built**, tested |
 | Incremental refresh from `git diff --name-only` | **Built**, tested: the refreshed map equals a full re-read |
 | Change routing by path ownership or exact symbol or file-name tokens | **Built**, tested |
-| `ModuleAgent` Durable Object (`src/do/ModuleAgent.ts`) and Worker `POST /module-agents/{load,wake,memory,route}` | **Built**, tested in Node on in-memory storage. **Not deployed** |
+| `ModuleAgent` Durable Object (`src/do/ModuleAgent.ts`) and Worker `POST /module-agents/{load,wake,memory,route}` | **Built**, tested in Node on in-memory storage. **Deployed** with the `madgrix` Worker (class provisioned); no live module-memory run recorded |
 | Routing record attached to a WorkGraph (`withModuleRouting`) | **Built**, display only. It isn't persisted in `TaskAuthority` or shown on the HTML page yet |
 | Module agent *doing the code change* with its memory | **Planned**. Today the woken agent returns its card and the matched file facts. Nothing runs an edit |
 | WebSocket hibernation, LLM summaries, cross-repo memory | **Planned / not built** |
@@ -31,7 +31,7 @@ Everything here is **deterministic and model-free**. No language model is called
 - **One Durable Object per module:** the name is `moduleAgentName(repo, module)`, which encodes repo, module id and sorted path globs. The object refuses any request that carries a different identity (409 `module_identity_mismatch`).
 - **Sleep and wake:** the object holds nothing in memory between requests. The card and meta (wake count, last 50 routed changes) live in DO storage. An idle object can therefore be evicted and comes back from storage on the next request. This is plain idle eviction. **It doesn't use the WebSocket Hibernation API.** "Wake" is a request that bumps `wake_count`, not a resident process.
 - **Pinned memory:** `/memory` and `/route` answer 409 `stale_memory` when the caller's SHA isn't `built_from_sha`. `/route` also refuses a routing record that doesn't name this module.
-- **Config:** `cloudflare.config.ts` declares `ModuleAgent` (sqlite storage) and the `MODULE_AGENT` binding. **Not deployed.** The first deploy creates the new class. Without the binding, the Worker answers 503 `module_agents_not_configured`. The routes require `CONTROL_SERVICE_TOKEN`.
+- **Config:** `cloudflare.config.ts` declares `ModuleAgent` (sqlite storage) and the `MODULE_AGENT` binding. **Deployed** (the class exists on the `madgrix` Worker; `competition/queue-ancestry-reconciliation` d17e656 keeps it in the config). Without the binding, the Worker answers 503 `module_agents_not_configured`. The routes require `CONTROL_SERVICE_TOKEN`.
 
 ## Fit with the fork crew
 
@@ -55,4 +55,4 @@ In both runs only the owning agent woke: Madgrix 1 of 11, theustad 1 of 2. In bo
 - **Extraction is regex-based.** It misses re-exports like `export * from`, computed exports, dynamic import paths, and Python `__all__`. Package imports such as `node:fs` aren't edges. The Madgrix map reports 2 relative imports it couldn't resolve.
 - **Routing from request text is exact token matching.** It has no semantic understanding.
 - **A module agent doesn't edit code yet.** Only the memory and routing are built.
-- **Not deployed:** the ModuleAgent DO has never run on Cloudflare.
+- **Deployed, not exercised live:** the ModuleAgent class is provisioned, but no live run has loaded or woken a module agent on Cloudflare.

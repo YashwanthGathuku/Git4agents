@@ -115,7 +115,7 @@ interface Env {
 	PROMOTION_WORKFLOW: WorkflowBindingLike;
 	/** Optional: one task id whose work-graph page is readable without a token (demo). */
 	MADGRIX_PUBLIC_DEMO_TASK_ID?: string;
-	/** ModuleAgent Durable Objects (docs/MODULE_MEMORY.md). Undeployed. */
+	/** ModuleAgent Durable Objects (docs/MODULE_MEMORY.md). Deployed with the madgrix Worker. */
 	MODULE_AGENT?: DoNamespace;
 }
 

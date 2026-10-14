@@ -89,7 +89,7 @@ except where a line says otherwise.
   bench 26/26 adversarial trials, `zero_tolerance_ok=true`. No CI run exists for the
   commits after it on this branch (CI runs on pushes to `main` and `codex/**` and on
   pull requests).
-- **Local runs of this branch's tree** (2026-10-13, `grok/final-fixes`): Node v22, `npm run typecheck` clean, `npm test` 372 tests / 119 suites / 0 failures.
+- **Local runs of this branch's tree** (2026-10-13, `grok/final-fixes`): Node v22, `npm run typecheck` clean, `npm test` 402 tests / 125 suites / 0 failures (after merging `competition/queue-ancestry-reconciliation`, 2026-10-14).
   Earlier (2026-10-03, 281 tests at that tree): `SLICE OK`, `HEAD-MOVE OK`, bench 26/26 with `zero_tolerance_ok=true`; with
   Node v24.21.0, the same steps in the order `.github/workflows/ci.yml` runs them,
   including `npm run build` (Worker bundle and container image, built with a local
@@ -112,10 +112,7 @@ except where a line says otherwise.
 
 ### Known gaps
 
-- **No end-to-end live run yet.** A `madgrix` Worker may exist on workers.dev from
-  earlier setup, but no recorded run of this tree on Cloudflare Workers, Durable
-  Objects, Containers, Workflows or Queues exists, and `npm run live:e2e` has not
-  completed against a deployment. The proof step that remains is:
+- **End-to-end live run: VERIFIED** (2026-10-13, ~15:20 ET, branch `grok/final-live`). `npm run live:e2e` in fork-crew mode (parent + sub-api + sub-ui on one Artifacts fork) completed all 9 steps against the deployed `madgrix` Worker on workers.dev: task `task_0090714a2ca6e6c167ec410a`, baseline `starter-repo` @ `7d6cb08`, combined and promoted SHA `3b71d3a93e41fde8716ed411c8e3be3abb684be6`, offline `verify` of the authority-signed bundle passed. That run exercised this path:
 
   ```
   real deployed Worker
@@ -133,8 +130,9 @@ except where a line says otherwise.
   → VERIFIED
   ```
 
-  `npm run live:e2e` is written to execute exactly that path and fails if real
-  Artifact push events do not arrive.
+  One recorded run is evidence, not a reliability claim. Each run promotes onto
+  `starter-repo` main, so the next run must set `MADGRIX_BASELINE_COMMIT` to the
+  current main (the runner refuses a fork that is not at the baseline).
 - **Workflows.** `PromotionWorkflow` has only run against a stand-in binding. The
   platform's instance-id rules, retry timing, `restart()` of an errored instance and
   `terminate()` of a running one are assumed from the runtime types, not observed.
@@ -182,12 +180,12 @@ npm run verify -- --trust-key .slice-output/authority.pub .slice-output/promotio
 npm run bench
 ```
 
-Test summary of this tree (local run, Node v22, 2026-10-13):
+Test summary of this tree (local run, Node v22, 2026-10-14):
 
 ```
-tests 372
-suites 119
-pass 372
+tests 402
+suites 125
+pass 402
 fail 0
 ```
 

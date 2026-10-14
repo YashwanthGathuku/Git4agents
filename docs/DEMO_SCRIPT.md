@@ -30,8 +30,8 @@ npm install   # if not already done
 npm test
 ```
 
-**Say:** "345 tests, 106 suites, all green — including the slice itself as an integration
-test." **Expected:** `ℹ tests 345 / ℹ pass 345 / ℹ fail 0`. That count is the local Node 24 suite of this tree on 2026-10-12, with `MADGRIX_FLEET_BIN` unset. It is not a Cloudflare run. `npm test` does not call `fleet`. `fleet validate` runs only when `MADGRIX_FLEET_BIN` is set, and then only as a roster cross-check. It does not execute the sub-agents.
+**Say:** "402 tests, 125 suites, all green — including the slice itself as an integration
+test." **Expected:** `ℹ tests 402 / ℹ pass 402 / ℹ fail 0`. That count is the local Node 22 suite of `grok/final-live` on 2026-10-14, with `MADGRIX_FLEET_BIN` unset. It is not a Cloudflare run. `npm test` does not call `fleet`. `fleet validate` runs only when `MADGRIX_FLEET_BIN` is set, and then only as a roster cross-check. It does not execute the sub-agents.
 
 ## 1:30–5:30 — The money: the full loop
 

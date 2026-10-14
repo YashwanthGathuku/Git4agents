@@ -27,7 +27,7 @@ A green local/CI test is not presented as a completed live Cloudflare run.
 | Security/threat model | ✅ | `docs/SECURITY.md`, `specs/EVALUATION_THREAT_MODEL.md` |
 | Architecture documentation | ✅ | `docs/ARCHITECTURE.md` |
 | Open-source license | ✅ MIT | `LICENSE` |
-| Real deployed MADGRIX E2E transcript | ⬜ | run `npm run live:e2e` after deployment |
+| Real deployed MADGRIX E2E transcript | ✅ | 2026-10-13 VERIFIED: task `task_0090714a2ca6e6c167ec410a`, promoted `3b71d3a` (README Known gaps) |
 | Demo video | ⬜ | record after successful live E2E |
 | Real benchmark dataset run | ⬜ | `docs/BENCHMARK_RUNBOOK.md` |
 | Submission form | ⬜ | final competition submission |
@@ -46,7 +46,7 @@ npm run bench            26/26 adversarial trials
                          zero_tolerance_ok=true
 ```
 
-That count is not this branch. Local `npm test` on `grok/final-fixes` (2026-10-13) is 363 tests / 116 suites / 0 failures; typecheck clean. Typecheck, build, slice, headmove, and bench were not re-run for the merge. The Oct 2 CI also syntax-checked the three live-run scripts and both container Git helpers.
+That count is not this branch. Local `npm test` on `grok/final-live` (2026-10-14) is 402 tests / 125 suites / 0 failures; typecheck clean. Typecheck, build, slice, headmove, and bench were not re-run for the merge. The Oct 2 CI also syntax-checked the three live-run scripts and both container Git helpers.
 
 ## Required before recording the final demo
 
@@ -75,10 +75,10 @@ Real Cloudflare Artifacts repository/token behavior has been exercised. The
 full Worker → Queue → Durable Object → evaluation → verdict → Container
 promotion path is implemented and builds in CI.
 
-## Claims to withhold until the live run exists
+## Claims to keep precise
 
-Do **not** yet claim that the complete MADGRIX production path has run
-end-to-end on Cloudflare. Do not call the synthetic benchmark a real-world
+One fork-crew live run completed end-to-end on Cloudflare (2026-10-13,
+VERIFIED). Do not claim more runs or reliability than that. Do not call the synthetic benchmark a real-world
 accuracy improvement. Do not claim Sigstore-backed production signing; the
 competition implementation uses Ed25519 DSSE envelopes. Do not claim the
 Cloudflare beta fork endpoint works; the documented import fallback is used
@@ -86,8 +86,6 @@ when its known beta failure signature occurs.
 
 ## Submission assets still needed
 
-- successful live-E2E transcript;
-- live promotion bundle + independent verifier transcript;
 - final demo video;
 - screenshots/diagram chosen for the submission page;
 - concise project description and technical write-up;
