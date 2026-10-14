@@ -18,6 +18,7 @@
     "headmove": "node src/harness/head-move.ts",
     "verify": "node src/cli/verify.ts",
     "bench": "node src/lib/benchmark.ts",
+    "attack:lab": "node scripts/attack-lab.ts",
     "test": "node --test \"test/**/*.test.ts\"",
     "contenders": "node scripts/run-contenders.mjs",
     "fork-crew": "node scripts/run-fork-crew.mjs",

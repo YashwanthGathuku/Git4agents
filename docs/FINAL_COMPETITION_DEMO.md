@@ -1,236 +1,253 @@
 # MADGRIX — final Cloudflare competition demo runbook
 
-Use this for the final 5–10 minute submission recording. Cloudflare asks for a 5–10 minute video that demonstrates what was built, what it enables agents/developers to do, and how it works.
+Target: **7–8 minutes**. Record only after the canonicality hardening branch is merged, deployed with the existing secrets file, and read-only smoke checks pass.
 
-## One sentence
+## The one sentence
 
-> **Agents can race. Only evidence can ship.** MADGRIX is the governed canonicalization layer for autonomous software development: agents work concurrently in isolated Git state, but only an independently evaluated, explicitly authorized exact software state can become canonical.
+> **Git decides ancestry. MADGRIX decides canonicality.** Agents can create many software states, but only an independently evaluated exact state that earns a single-use CanonCap may become canonical.
 
-## Recording sources
+Secondary line:
 
-### Live source of truth
+> **Agents can race. Only evidence can ship.**
 
-After deploying `competition/mission-control`, open:
+## Sources to have open before recording
+
+Live Run 4 Mission Control:
 
 ```text
 https://madgrix.ygathuku96.workers.dev/tasks/task_79b1f9d610e94d8e95daa503/graph
 ```
 
-`cloudflare.config.ts` pins exactly this recorded run as `MADGRIX_PUBLIC_DEMO_TASK_ID`. The route is read-only without a token only for that task. All other task graph routes retain agent/control authentication.
+Live Run 4 causal proof after hardening deploy:
 
-Run 4 facts already recorded in the repository:
-
-- task: `task_79b1f9d610e94d8e95daa503`
-- baseline: `b3ee4c862dcc6996678dc25c1de5c49b060fa9d4`
-- combined / authorized / promoted SHA: `d55332b544992a2e033ca03fa54972c5283eef73`
-- TheUstad: `FINAL VERIFIED`
-- orchestrator: `MADGRIX_LIVE_E2E_OK`
-- offline promotion bundle: `VERIFIED`
-- canonical repository: real Cloudflare Artifacts `starter-repo`
-
-### Conflict source
-
-Use the local conflict fixture only when showing a deliberate conflict. Keep the `Fixture/demo input` banner visible. Never present it as run 4 or as a Cloudflare call.
-
-```bash
-node scripts/render-demo-graph.mjs
+```text
+https://madgrix.ygathuku96.workers.dev/tasks/task_79b1f9d610e94d8e95daa503/why/d55332b544992a2e033ca03fa54972c5283eef73
 ```
 
-### Live-run recording
+Terminal at repository root, ready for:
 
-The 88-second run-4 capture is the proof that the end-to-end path actually executed. Use a short excerpt rather than replaying the full clip if the narrated recording is approaching ten minutes.
+```bash
+npm run attack:lab
+```
 
-Recorded location from the live-run journal:
+Run 4 facts:
+
+- task `task_79b1f9d610e94d8e95daa503`
+- baseline `b3ee4c862dcc6996678dc25c1de5c49b060fa9d4`
+- reviewed / authorized / promoted SHA `d55332b544992a2e033ca03fa54972c5283eef73`
+- TheUstad `FINAL VERIFIED`
+- orchestrator `MADGRIX_LIVE_E2E_OK`
+- offline promotion bundle `VERIFIED`
+- canonical repository: real Cloudflare Artifacts `starter-repo`
+
+Keep the 88-second original live Run 4 capture ready as backup proof:
 
 ```text
 ~/workspace/madgrix-live-run/video/git4agents-live-run4.mp4
 ```
 
-## 7–8 minute narrative
+## 7–8 minute script
 
-### 0:00–0:40 — The problem
+### 0:00–0:35 — Hook: the missing Git primitive
 
-Screen: live Mission Control, top of run 4.
-
-Say:
-
-> "Git tells us what changed. That is not enough when autonomous agents can create, review, and ship changes without a human watching every operation. We need to know why work started, what authority each agent had, what other attempts existed, what evidence was produced, which state was authorized, and whether that exact reviewed state is what became canonical."
-
-> "MADGRIX is that control plane. Agents can race. Only evidence can ship."
-
-Point to the live task id, baseline, status and the Mission Control summary.
-
-### 0:40–1:35 — Concurrent autonomous work
-
-Screen: CrewContender + Semantic clearance.
+Screen: live Mission Control at the top.
 
 Say:
 
-> "This task ran on Cloudflare. One parent coordinated concurrent sub-agents on isolated contender state. They did not receive a credential that can write canonical Git. Their WorkClaims record intent, baseline, scope and lease before their work can be admitted."
+> “Git is excellent at answering what came before a commit. But when autonomous agents can create and review changes without a human watching every operation, there is a second question: **which exact software state has the right to become canonical?**”
 
-> "Semantic clearance is not a new permission system layered on top. It is a read-only projection of the authority records MADGRIX already stores. CLEAR, CAUTION or HOLD summarizes recorded WorkClaim interactions; the verdict and exact-state permit remain the real gates."
+> “MADGRIX separates those ideas. Git decides ancestry. MADGRIX decides canonicality.”
 
-If the live task has no conflict report, say exactly that. Do not imply a HOLD occurred in run 4.
+Point to Run 4 task, baseline and final SHA.
 
-### 1:35–2:25 — What Cloudflare contributes
+### 0:35–1:25 — Concurrent work without canonical authority
 
-Screen: keep live task open; optionally show README architecture diagram.
-
-Say:
-
-> "Cloudflare Artifacts is not just storage here. It gives MADGRIX isolated Git repositories and scoped credentials for contender work while canonical Git stays separate. Artifacts push events enter a Queue. A TaskAuthority Durable Object serializes authority state. The promotion path is a Workflow and trusted Container, and only that path gets canonical write authority."
-
-> "So the architecture separates producing code, evaluating code, authorizing code and shipping code. No agent gets all four powers."
-
-### 2:25–3:15 — Conflict before merge
-
-Screen: local conflicted fixture, banner visible.
+Screen: CrewContender + claims/clearance.
 
 Say:
 
-> "Now this is deliberately a local fixture, because I want to show a conflict state cleanly. Human Git usually exposes conflict at merge time. MADGRIX records the collaboration conflict while work is still represented as claims and contributions."
+> “This is a real recorded Cloudflare task. A parent coordinated two concurrent scripted sub-agent roles on contender state. The agents can create Git commits, but they never receive canonical write authority. WorkClaims record intent, baseline and scope before their work is admitted.”
 
-Point to the stored risk/layers and then to Composition.
+> “The important distinction is candidate creation versus canonicalization. An agent can produce a state. That does not give the state the right to become real.”
 
-> "The important invariant is here: CONFLICTED means promotable candidate NONE. A member contribution SHA does not become a candidate just because it exists. Resolution has to create a new software state."
+Do not call the scripted sub-agents LLM agents.
 
-Switch to resolved fixture and point to the new candidate.
+### 1:25–2:10 — Cloudflare is the execution substrate
 
-> "The resolved SHA is new. It is still not allowed to ship merely because the conflict disappeared. It still needs independent evidence, a verdict and an exact-state permit."
-
-### 3:15–4:05 — Blind verification and non-compensatory gates
-
-Screen: return to live run-4 Mission Control. Scroll to Evaluation + Blind verifier board + Verdict Seam.
+Screen: README architecture diagram or keep Mission Control visible.
 
 Say:
 
-> "Evaluation is independent of the writer. Baseline, scope, test integrity, hidden tests, regression tests, security, provenance, semantic checks and tamper state are separate gates. A security failure cannot be outweighed by a style score."
+> “Cloudflare Artifacts stores canonical and contender Git state and issues scoped repository credentials. Real Artifacts push events enter a Queue. A TaskAuthority Durable Object owns the authorization state machine. Promotion is a Workflow and trusted Container, and only that path can write canonical Git.”
 
-> "The blind verifiers commit before candidate exposure, reveal later, and submit signed reports against blind candidate labels. The public page shows the protocol progress but deliberately does not expose signatures, keys, private reasons or the candidate-label-to-SHA mapping."
+> “Workers exposes both REST and MCP. MCP is not a policy bypass: its tools delegate back through the same core router and authority checks.”
 
-Point to verdict.
+### 2:10–3:05 — CanonCap: canonicality is a capability
 
-> "Only the Verdict Seam can select a winner. It can also reject, abstain, escalate or quarantine."
-
-### 4:05–5:05 — Exact-state authorization
-
-Screen: Authorization + Promotion.
+Screen: scroll Mission Control to **MADGRIX Canonicality**.
 
 Say:
 
-> "An ACCEPT verdict still cannot push main. MADGRIX issues a single-use permit bound to the candidate SHA, baseline, tree digest, evaluation bundle hash, policy and expected destination HEAD. If main moves, that authorization is stale. Rebase creates a new SHA and that new state must be evaluated again."
+> “Here is the primitive we expose: CanonCap. It is the public descriptor of MADGRIX's existing exact-state permit.”
 
-Point to authorized SHA and promoted SHA.
+Point to:
 
-> "The promotion container fast-forwards canonical Git to the authorized candidate itself. It does not create a different merge commit after review."
-
-### 5:05–6:00 — WHY CANONICAL
-
-Screen: `Why canonical?`.
-
-Say:
-
-> "This is the question ordinary Git history cannot answer by itself: why is this exact state canonical?"
-
-Walk down the fields:
-
-- task intent
-- task id
-- baseline
-- producer / contender
-- selected candidate
-- number of competing evaluations
-- verdict
-- permit
-- evaluation binding
-- destination-head binding
-- canonical destination
-- final SHA
-
-Finish:
-
-> "For this recorded run the authorized candidate and shipped commit are the same exact SHA. What was authorized is what was shipped."
-
-Do not call the HTML page an offline verifier. It is an explanation of stored records.
-
-### 6:00–6:45 — Proof the gates can say no
-
-Screen: `docs/LIVE_RUN_RESULTS.md` or the relevant journal section.
+- candidate SHA;
+- tree digest;
+- evidence bundle binding;
+- destination repository;
+- expected destination HEAD;
+- `CONSUMED` / single-use state.
 
 Say:
 
-> "A governance system that only says yes is theater. Run 3 attempt 1 was rejected because the WorkClaim omitted `.madgrix/**` while the candidate touched those paths. Nothing was promoted. We corrected the claim and ran the same gates again."
+> “This is not ‘agent X may merge’. It is: **this exact reviewed state, under this evidence and this destination state, may canonicalize once.** Change the candidate, tree, evidence, policy or destination HEAD and the old authority no longer matches. If main moves, a rebase creates a new SHA and that state must be evaluated again.”
 
-Then mention the head-move harness:
+### 3:05–4:00 — Attack Lab: make the security visible
 
-> "The separate head-move scenario also proves an old permit cannot silently authorize a rebased or destination-shifted state."
+Screen: terminal.
 
-Do not present either as a live Cloudflare fault-injection benchmark unless that exact run was live.
+Run:
 
-### 6:45–7:30 — Real Cloudflare proof and close
+```bash
+npm run attack:lab
+```
 
-Screen: short run-4 video excerpt or `docs/LIVE_RUN_RESULTS.md`, then back to Mission Control top.
+Let the result stay visible.
 
 Say:
 
-> "This was not a single mocked happy path. MADGRIX has four recorded end-to-end Cloudflare promotions. Each run began from the previous run's canonical SHA. Run 4 finished `MADGRIX_LIVE_E2E_OK`, TheUstad returned `FINAL VERIFIED`, the promotion bundle verified offline, and a fresh Artifacts `git ls-remote` independently showed canonical main at the promoted SHA."
+> “Trust protocols are hard to demo because success looks boring. So this runs MADGRIX's existing adversarial protocol harness and asks the opposite question: can stale or abusive authority ship?”
+
+Point to blocked classes such as replay, destination-head race, duplicate events, quarantine and mandatory integrity failure.
+
+Finish on:
+
+```text
+26/26 adversarial trials passed
+unauthorized canonical promotions: 0
+ATTACK_LAB_VERIFIED
+```
+
+Say clearly:
+
+> “This is local adversarial protocol validation, not live Cloudflare fault injection.”
+
+### 4:00–4:45 — Conflict Capsule
+
+Screen: deliberate local conflict fixture, with its fixture banner visible.
+
+Say:
+
+> “Conflicts have a similar problem. Conflict marker text is a human-editor representation. In MADGRIX, a `CONFLICTED` composition is not a candidate.”
+
+Show the Conflict Capsule fixture/output.
+
+> “The capsule is content-addressed metadata over the conflict: baseline, contribution SHAs, paths and excerpt digests. It explicitly says candidate SHA is null, old authority is invalid and resolution must create a new SHA that re-enters evaluation.”
+
+Do not present the fixture as Run 4 or a live Cloudflare conflict.
+
+### 4:45–5:35 — Independent evaluation + blind verification
+
+Screen: live Run 4 Evaluation / verifier / Verdict Seam.
+
+Say:
+
+> “A candidate does not grade itself. Evaluation is separately authenticated and checks baseline, scope, hidden tests, regressions, security, provenance and tamper state. Mandatory gates are non-compensatory.”
+
+> “Blind verifiers commit references before candidate exposure, reveal later and submit signed reports. Only the Verdict Seam can select a winner—or reject, abstain, escalate or quarantine.”
+
+Clarify TheUstad if shown:
+
+> “TheUstad is the frozen-baseline integrity gate in this fork-crew path; it is not the semantic judge of the combined candidate.”
+
+### 5:35–6:25 — Causal Proof Graph: why canonical?
+
+Screen: live `/why/d55332b5...` JSON or the Mission Control causal panel.
+
+Say:
+
+> “Ordinary Git gives me the ancestry graph. This projection answers a different query: **why was this exact SHA allowed to become canonical?**”
+
+Walk the chain:
+
+```text
+task → claims → composition → evaluation → verdict → CanonCap → promotion proof → canonical SHA
+```
+
+Point to `causal_root`.
+
+> “Every displayed proof node is content-addressed, and the whole explanation has a deterministic root. It does not grant authority; it proves the causal path through the authority records. Private verifier prose, secrets, permit nonces and raw conflict source are deliberately excluded.”
+
+### 6:25–7:05 — Exact reviewed SHA = shipped SHA
+
+Screen: Authorization / Promotion and final SHA.
+
+Say:
+
+> “The promotion Container does not create a convenient new merge commit after review. It fast-forwards canonical Git to the candidate that was actually authorized.”
+
+Point to:
+
+```text
+reviewed   d55332b544992a2e033ca03fa54972c5283eef73
+promoted   d55332b544992a2e033ca03fa54972c5283eef73
+```
+
+> “What was reviewed is exactly what shipped.”
+
+### 7:05–7:40 — Four real runs + offline proof
+
+Screen: `docs/LIVE_RUN_RESULTS.md`, short original Run 4 clip, then offline verifier transcript.
+
+Say:
+
+> “MADGRIX has four recorded end-to-end Cloudflare promotions, each starting from the previous run's canonical state. Run 4 completed `MADGRIX_LIVE_E2E_OK`, TheUstad returned `FINAL VERIFIED`, and the signed promotion bundle verified offline against the pinned authority key.”
 
 Close:
 
-> "Git was built to track changes to code. MADGRIX coordinates, verifies and authorizes changes made by populations of autonomous agents—and proves why one exact software state earned the right to become real. Agents can race. Only evidence can ship."
+> “Git records change. MADGRIX governs canonicality. Agents can race. Only evidence can ship.”
 
 Stop.
 
-## Camera checklist
+## Recording safety checklist
 
-Before recording:
+Before pressing Record:
 
-- deploy the branch and open the public run-4 Mission Control URL in a private/incognito browser to prove it needs no secret;
-- confirm `/health` is 200;
-- confirm another random `/tasks/<id>/graph` still returns auth-required/not-found according to the route contract;
-- keep terminal/font large;
-- hide service tokens, Git credentials, Cloudflare API tokens and local secret files;
-- do not open browser network panels containing authorization headers;
-- keep the local conflict fixture's banner visible;
-- have the 88-second run-4 video queued as backup evidence;
-- have `docs/LIVE_RUN_RESULTS.md` queued to the four-run table;
-- record one continuous narrated take if possible.
+- deploy only after merge and green CI;
+- **every deploy must preserve the existing secrets file** (`--secrets-file /home/box/.madgrix/secrets.env` in the current environment);
+- do not run `live:e2e` again just for the video;
+- open Mission Control in an incognito/private window and confirm Run 4 is public read-only;
+- confirm a random task's new canonicality route is still 401/auth-protected;
+- confirm `/mcp` discovery still works after deployment;
+- confirm the Run 4 `/why/<sha>` route returns the expected SHA and a 64-hex `causal_root`;
+- never show service tokens, Git credentials, Cloudflare API tokens or local secret files;
+- keep the local conflict fixture banner visible;
+- call Attack Lab a **local adversarial protocol harness**, not live fault injection;
+- keep the video between five and ten minutes.
 
-## Submission page fields
-
-Cloudflare requires:
-
-- project name
-- project vision
-- how Cloudflare was used
-- 5–10 minute demo video
-- permissively licensed open-source repository URL
-- instructions to run/try the project
-
-The repository is MIT licensed.
+## Submission fields
 
 ### Project name
 
-`MADGRIX — Git for Autonomous Agents`
+`MADGRIX — Canonicality for Autonomous Software`
 
 ### Project vision
 
-`Agents can race. Only evidence can ship. MADGRIX is an agent-native Git control plane that coordinates concurrent autonomous work, records intent and authority before action, independently evaluates competing software states, and allows only the exact evidence-backed state authorized by its Verdict Seam to become canonical.`
+`Git decides ancestry. MADGRIX decides canonicality. Autonomous agents may create many competing software states, but a state may become canonical only when it earns single-use, evidence-bound exact-state authority. MADGRIX coordinates contender work, independently evaluates it, blind-verifies the decision, binds canonicalization authority to the exact candidate and destination state, promotes that exact reviewed SHA, and emits an offline-verifiable proof of why it shipped.`
 
 ### How Cloudflare was used
 
-`MADGRIX uses Cloudflare Artifacts as isolated Git state for canonical and contender repositories; Artifacts push events feed Cloudflare Queues; Workers expose the control plane and consume those events; TaskAuthority and promotion state are held by Durable Objects; a Cloudflare Workflow provides one durable promotion instance per exact-state permit; and a trusted Cloudflare Container performs the only canonical Git write. The recorded competition run completed this path end-to-end on real Cloudflare infrastructure.`
+`MADGRIX uses Cloudflare Artifacts for canonical and contender Git state plus scoped credentials; Artifacts push events feed Cloudflare Queues; Workers exposes the REST/MCP control plane and consumes those events; TaskAuthority and promotion coordination use Durable Objects; a Cloudflare Workflow provides one durable promotion instance per exact-state permit; and a trusted Cloudflare Container performs the only canonical Git write. Four recorded competition runs completed the real Cloudflare path end-to-end.`
 
-### Try it
-
-After the competition branch is deployed:
+### Repository / try it
 
 ```text
-Live read-only Mission Control:
-https://madgrix.ygathuku96.workers.dev/tasks/task_79b1f9d610e94d8e95daa503/graph
-
 Repository:
 https://github.com/YashwanthGathuku/Madgrix
+
+Live Mission Control after final hardening deploy:
+https://madgrix.ygathuku96.workers.dev/tasks/task_79b1f9d610e94d8e95daa503/graph
 ```
 
-For a full local verification path, follow the README's Node 24 / npm / Git / Docker instructions and run the documented test, slice, head-move and offline-verifier commands.
+MIT licensed. Full local reproduction commands are in the root README.
