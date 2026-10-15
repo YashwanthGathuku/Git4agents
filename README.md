@@ -40,6 +40,23 @@ Three recorded live runs: crew of 13 on ky (12 overlaps, promoted `d5bcf018194b`
 
 ---
 
+## Why Git4agents: strongest features
+
+Judging criteria tags: **[O]** originality · **[C]** concurrency, coordination & conflict · **[E]** ease of use.
+
+- **Blind commit-then-reveal evaluation**: verifiers commit to references before candidates exist, then reveal and sign. **[O]**
+- **Mandatory, non-overridable gates**: a failed gate loses even with perfect scores; the board's Override button answers *"Refused: mandatory gates cannot be waived"*. **[O][C]**
+- **Mechanical cheater quarantine**: editing eval files taints the bundle and revokes write access; live cheater run, ledger #19 `contender_quarantined` (`eval_file_modification`). **[C]**
+- **Exact-SHA, single-use signed permits**: only the reviewed commit can reach canonical history; a moved HEAD expires the permit. **[O][C]**
+- **Offline verify with a pinned key**: every promotion ships a signed bundle; a one-byte-tampered copy is **NOT VERIFIED**. **[O][E]**
+- **Fork crew with path claims and overlap flagging**: 13 agents (1 parent + 12 sub-agents) on ky, 12 overlaps flagged, promoted `d5bcf018194b`. **[C]**
+- **3,000-agent claim scale run**: 3,000/3,000 claims granted, 149/149 seeded overlaps flagged, 0 false flags, intact ledger chain. **[C]**
+- **Module memory cards**: one card per module, held by per-module Durable Object agents that sleep between requests and wake on routed changes; a second pass re-read 25 of 184 files. **[O][C]**
+- **Same-file combine**: per-file three-way merge turns disjoint edits, even in one file, into one COMPOSED commit; overlapping lines become CONFLICTED, never dropped. **[C]**
+- **TheUstad done-check**: a "done" commit that is not on the frozen baseline is `FINAL FALSIFIED` and nothing is written. **[C]**
+- **Bring any public repo into the live mall**: [/board/new](https://madgrix.ygathuku96.workers.dev/board/new) imports it, freezes a task, claims and forks per agent, and opens `/board?live=1`. **[E]**
+- **All on Cloudflare**: Workers, Durable Objects, Queues, Containers, Workflows and Artifacts. **[E]**
+
 ## Architecture
 
 ```mermaid
@@ -79,8 +96,6 @@ flowchart LR
 | **Artifacts** | Git repositories: the canonical `starter-repo` and per-task contender forks with scoped tokens |
 
 More detail is in [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). CanonCap, the causal proof graph, conflict capsules and the canonicality routes are described in [docs/CANONICALITY.md](docs/CANONICALITY.md).
-
-More detail: [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), canonicality primitives (CanonCap, `/why`, conflict capsules) in [docs/CANONICALITY.md](docs/CANONICALITY.md).
 
 ### Fork crew → promote
 
@@ -244,6 +259,33 @@ node scripts/scale-agents.mjs --mode local --ramp 10,100,1000   # no account nee
 - Evaluation-domain auth is a bearer secret, not mTLS. Signing is Ed25519 with a pinned key, no KMS/HSM.
 - Fork-crew worktrees use scoped credentials but are not adversarial microVM isolation.
 - More: [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
+
+## Documentation
+
+- [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md): how each Cloudflare product is used
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): protocol architecture and trust domains
+- [docs/CANONICALITY.md](docs/CANONICALITY.md): CanonCap, the causal proof graph, conflict capsules, `/why`
+- [docs/CANONICALITY_PRIMITIVES.md](docs/CANONICALITY_PRIMITIVES.md): canonicality primitives in detail
+- [docs/CANONICALITY_PRIOR_ART.md](docs/CANONICALITY_PRIOR_ART.md): prior-art boundary for the canonicality primitives
+- [docs/SCALE.md](docs/SCALE.md): the 3,000-agent live scale run and crew runs
+- [docs/FLEET_10K.md](docs/FLEET_10K.md): 10,000-agent fleet scaling notes
+- [docs/LIVE_RUN_RESULTS.md](docs/LIVE_RUN_RESULTS.md): live run results, with vs without Git4agents
+- [docs/MODULE_MEMORY.md](docs/MODULE_MEMORY.md): module memory cards and per-module agents
+- [docs/MODULE_MEMORY_BENCHMARK.md](docs/MODULE_MEMORY_BENCHMARK.md): module memory benchmark
+- [docs/BENCHMARK_RUNBOOK.md](docs/BENCHMARK_RUNBOOK.md): pre-registered benchmark procedure
+- [docs/MCP_AGENT_TOOLS.md](docs/MCP_AGENT_TOOLS.md): the MCP agent interface (`/mcp`)
+- [docs/VERIFY_ARTIFACT.md](docs/VERIFY_ARTIFACT.md): offline bundle / artifact verifier
+- [docs/SECURITY.md](docs/SECURITY.md): security model
+- [docs/SECURITY_BOUNDARIES.md](docs/SECURITY_BOUNDARIES.md): security boundaries between domains
+- [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md): known limitations
+- [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md): deploying your own Worker
+- [docs/CLOUDFLARE_LIVE_READINESS.md](docs/CLOUDFLARE_LIVE_READINESS.md): live readiness checklist
+- [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md): demo runbook
+- [docs/FINAL_COMPETITION_DEMO.md](docs/FINAL_COMPETITION_DEMO.md): competition demo runbook
+- [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md): demo video script
+- [keys/README.md](keys/README.md): the pinned authority public key (`keys/authority.pub`)
+- [docs/bundles/](docs/bundles): signed bundles from the live runs (`live-run-4`, `live-crew-13`, `live-cheater`) for offline verify
+- [specs/](specs): the frozen protocol specs and amendments
 
 ## License
 
