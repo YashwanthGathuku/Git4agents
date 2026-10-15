@@ -10,6 +10,8 @@ Every promotion leaves a signed bundle you can verify offline, so "it passed rev
 
 **Live:** https://madgrix.ygathuku96.workers.dev · **◆ Trust board:** https://madgrix.ygathuku96.workers.dev/board · **＋ Bring your repo:** https://madgrix.ygathuku96.workers.dev/board/new · **Demo video:** _link to be added_ (script: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md))
 
+[![Git4agents landing page: hanging marquee, isometric repo mall preview, how-it-works steps, receipts of the real runs](docs/assets/landing.png)](https://madgrix.ygathuku96.workers.dev/)
+
 [![Trust board mall: live cheater run, cheater-cal stopped by security and taken to the quarantine room, false-done-fay turned back at checkout, honest-ana drives off with the promoted SHA](docs/assets/board-cheater.gif)](https://madgrix.ygathuku96.workers.dev/board?scenario=cheater&autoplay=1)
 
 [/board](https://madgrix.ygathuku96.workers.dev/board): each repo is drawn as an illustrated 2.5D isometric shopping mall: two storeys with a lit mezzanine, a glass atrium over the checkout court, shadows and depth. Agents walk in through the fork & enroll desk, visit stores (the repo's directories, signs named after real module paths), pick up items (the files they claimed; two shoppers at one shelf = overlap flagged), then queue at checkout where the gates run (blind eval, hidden tests, provenance). Stores **upgrade** as work lands (open → busy with lit windows → "landed ★" with an extra floor and flag) and **degrade** on gate failures or quarantine (dimmed, boarded windows, crack, caution tape). Honest shoppers drive off with the promoted SHA; the cheater is taken to the quarantine room with its reason; the false-done shopper is turned back. The ledger receipt prints real ledger events; click a store or shopper for details. Params: `?scenario=crew|cheater|scale&autoplay=1&speed=2&loop=1`.
@@ -18,15 +20,19 @@ Every promotion leaves a signed bundle you can verify offline, so "it passed rev
 
 **Open your own repo in the mall** ([/board/new](https://madgrix.ygathuku96.workers.dev/board/new)): paste a public GitHub URL, an instruction and (optionally) the paths to claim. With the demo access key, the Worker imports the repo into Artifacts (binding `import()`), freezes a real task with your instruction (`handleCreateTask`), registers one claim per agent from your instruction and forks one Artifacts repo per agent (`handleClaim` + `handleCreateContender`, the same first steps as `scripts/run-contenders.mjs`), then redirects to the live mall. It does **not** run agents; commits and gate runs come from the agent runners, and the mall shows only what the authority records. Agent secrets and fork tokens are discarded server-side. Protected by a demo key (Worker secret), a per-IP limit (1 import / 10 min, best effort) and a 20 MB repo cap. Verified end to end: `sindresorhus/is-plain-obj` (MIT) → `task_f0936a321f6c5844dd2bc2af`, 2 claims, 2 forks, 8 ledger entries.
 
-| ![board new](docs/assets/board-new.png) | ![board live mode](docs/assets/board-live.png) |
-|---|---|
 
 
 Three recorded live runs: crew of 13 on ky (12 overlaps, promoted `d5bcf018194b`) · cheater (`cheater-cal` quarantined, ledger #19 `eval_file_modification`; `false-done-fay` failed hidden tests; `honest-ana` `f27946233a53` promoted and VERIFIED; tampered bundle NOT VERIFIED) · 3,000-agent claims (149/149 overlaps flagged). Agents, files, gates, ledger entries and SHAs are REAL (`scripts/build-board-data.py`); the floor plan, walking and the 300-figure crowd are a visualization.
 
-| ![board crew](docs/assets/board-crew.png) | ![board scale](docs/assets/board-scale.png) |
+| Crew of 13 on ky: shoppers at their shelves, overlaps flagged | Crew promoted: everyone in the parking lot, `d5bcf018194b` |
 |---|---|
-| ![board cheater](docs/assets/board-cheater.png) | ![board crew promoted](docs/assets/board-crew-done.png) |
+| ![board crew](docs/assets/board-crew.png) | ![board crew promoted](docs/assets/board-crew-done.png) |
+| **Cheater: cheater-cal in quarantine, test/ boarded up** | **Price-tag card: real agent details** |
+| ![board cheater](docs/assets/board-cheater.png) | ![board price-tag card](docs/assets/board-file-modal.png) |
+| **Scale: 3,000 claims, 149/149 overlaps** | **Live mode: a real task imported via /board/new** |
+| ![board scale](docs/assets/board-scale.png) | ![board live mode](docs/assets/board-live.png) |
+| **/board/new: bring your repo** | |
+| ![board new](docs/assets/board-new.png) | |
 
 ![Live cheater run: cheater-cal quarantined (eval_file_modification), TheUstad FINAL FALSIFIED, tampered bundle NOT VERIFIED](docs/assets/live-cheater-quarantine.gif)
 
@@ -122,13 +128,6 @@ stateDiagram-v2
 ```
 
 <sub>`claimed`, `candidate`, `rejected`, `permitted` and `promoted` are descriptive names for points in the ledger; the stored contender status values are `forked`, `submitted`, `quarantined`, `revoked`, `released`.</sub>
-
-## Screenshots (live Worker)
-
-| Landing | Replay: mid-run |
-|---|---|
-| ![landing](docs/assets/landing.png) | ![board crew](docs/assets/board-crew-done.png) |
-| **Replay: finished (offline verify VERIFIED)** | **Attack tab (simulated): QUARANTINED** |
 
 ## How Git4agents answers the four questions
 
