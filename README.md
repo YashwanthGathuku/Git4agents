@@ -85,6 +85,10 @@ One task, N scripted agents against the live Worker. Each is enrolled, claims a 
 
 The limit is latency on the task's single Durable Object (claims are serialized), not correctness.
 
+## Canonicality primitives
+
+CanonCap, causal proof graphs (`/why`), conflict capsules and the canonicality projection: see [docs/CANONICALITY.md](docs/CANONICALITY.md).
+
 ## Quick start
 
 ```bash
