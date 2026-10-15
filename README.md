@@ -8,37 +8,79 @@ Agents can now write code faster than anyone can review it. Branch permissions s
 Git4agents lets many agents work in parallel, but only one exact commit, checked by gates nobody can override, can become canonical.
 Every promotion leaves a signed bundle you can verify offline, so "it passed review" is checkable instead of a claim.
 
-**Live:** https://madgrix.ygathuku96.workers.dev · **◆ Trust board:** https://madgrix.ygathuku96.workers.dev/board · **＋ Bring your repo:** https://madgrix.ygathuku96.workers.dev/board/new · **Demo video:** _link to be added_ (script: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md))
-
-[![Git4agents landing page: hanging marquee, isometric repo mall preview, how-it-works steps, receipts of the real runs](docs/assets/landing.png)](https://madgrix.ygathuku96.workers.dev/)
-
-[![Trust board mall: live cheater run, cheater-cal stopped by security and taken to the quarantine room, false-done-fay turned back at checkout, honest-ana drives off with the promoted SHA](docs/assets/board-cheater.gif)](https://madgrix.ygathuku96.workers.dev/board?scenario=cheater&autoplay=1)
-
-[/board](https://madgrix.ygathuku96.workers.dev/board): each repo is drawn as an illustrated 2.5D isometric shopping mall: two storeys with a lit mezzanine, a glass atrium over the checkout court, shadows and depth. Agents walk in through the fork & enroll desk, visit stores (the repo's directories, signs named after real module paths), pick up items (the files they claimed; two shoppers at one shelf = overlap flagged), then queue at checkout where the gates run (blind eval, hidden tests, provenance). Stores **upgrade** as work lands (open → busy with lit windows → "landed ★" with an extra floor and flag) and **degrade** on gate failures or quarantine (dimmed, boarded windows, crack, caution tape). Honest shoppers drive off with the promoted SHA; the cheater is taken to the quarantine room with its reason; the false-done shopper is turned back. The ledger receipt prints real ledger events; click a store or shopper for details. Params: `?scenario=crew|cheater|scale&autoplay=1&speed=2&loop=1`.
-
-**Live mode** (`/board?live=1`, also the default with no `scenario`): polls the read-only, public-safe `GET /tasks/:id/board-state` every 4 s (whitelisted fields only: agent ids, claim paths, contender status, gate booleans, verdict winner, ledger kinds/hashes; no tokens or token ids) and redraws the mall as forks, claims, gate results and ledger events change. There is no public task index, so it watches the recorded task ids plus any you add with `&task=<id>,<id>`.
-
-**Open your own repo in the mall** ([/board/new](https://madgrix.ygathuku96.workers.dev/board/new)): paste a public GitHub URL, an instruction and (optionally) the paths to claim. With the demo access key, the Worker imports the repo into Artifacts (binding `import()`), freezes a real task with your instruction (`handleCreateTask`), registers one claim per agent from your instruction and forks one Artifacts repo per agent (`handleClaim` + `handleCreateContender`, the same first steps as `scripts/run-contenders.mjs`), then redirects to the live mall. It does **not** run agents; commits and gate runs come from the agent runners, and the mall shows only what the authority records. Agent secrets and fork tokens are discarded server-side. Protected by a demo key (Worker secret), a per-IP limit (1 import / 10 min, best effort) and a 20 MB repo cap. Verified end to end: `sindresorhus/is-plain-obj` (MIT) → `task_f0936a321f6c5844dd2bc2af`, 2 claims, 2 forks, 8 ledger entries.
-
-
-
-Three recorded live runs: crew of 13 on ky (12 overlaps, promoted `d5bcf018194b`) · cheater (`cheater-cal` quarantined, ledger #19 `eval_file_modification`; `false-done-fay` failed hidden tests; `honest-ana` `f27946233a53` promoted and VERIFIED; tampered bundle NOT VERIFIED) · 3,000-agent claims (149/149 overlaps flagged). Agents, files, gates, ledger entries and SHAs are REAL (`scripts/build-board-data.py`); the floor plan, walking and the 300-figure crowd are a visualization.
-
-| Crew of 13 on ky: shoppers at their shelves, overlaps flagged | Crew promoted: everyone in the parking lot, `d5bcf018194b` |
-|---|---|
-| ![board crew](docs/assets/board-crew.png) | ![board crew promoted](docs/assets/board-crew-done.png) |
-| **Cheater: cheater-cal in quarantine, test/ boarded up** | **Price-tag card: real agent details** |
-| ![board cheater](docs/assets/board-cheater.png) | ![board price-tag card](docs/assets/board-file-modal.png) |
-| **Scale: 3,000 claims, 149/149 overlaps** | **Live mode: a real task imported via /board/new** |
-| ![board scale](docs/assets/board-scale.png) | ![board live mode](docs/assets/board-live.png) |
-| **/board/new: bring your repo** | |
-| ![board new](docs/assets/board-new.png) | |
+**Live:** https://madgrix.ygathuku96.workers.dev · **▶ Mission Control / Trust Board:** https://madgrix.ygathuku96.workers.dev/board · **MCP:** `POST /mcp` · **Demo video:** _link to be added_ (script: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md))
 
 ![Live cheater run: cheater-cal quarantined (eval_file_modification), TheUstad FINAL FALSIFIED, tampered bundle NOT VERIFIED](docs/assets/live-cheater-quarantine.gif)
 
 <sub>Recorded live against the deployed Worker, task `task_6dce45beed286be0230b754e`: the cheating contender is quarantined from the public ledger, a false "done" is FALSIFIED by TheUstad, and a one-byte-tampered bundle fails offline verify.</sub>
 
 ---
+
+## Visual architecture and Git-for-agents guide
+
+These repository-native SVGs summarize the implemented system. They are meant to make the agent-era trust model visible at a glance; the linked technical documents and code remain authoritative.
+
+### Cloudflare-native architecture
+
+![MADGRIX Cloudflare architecture](docs/assets/diagrams/01-cloudflare-architecture.svg)
+
+[Cloudflare architecture](docs/CLOUDFLARE_ARCHITECTURE.md) · [system architecture](docs/ARCHITECTURE.md) · [canonicality](docs/CANONICALITY.md)
+
+### Governed promotion workflow
+
+![MADGRIX governed promotion workflow](docs/assets/diagrams/02-governed-promotion-workflow.svg)
+
+[Architecture](docs/ARCHITECTURE.md) · [canonicality](docs/CANONICALITY.md) · [live results](docs/LIVE_RUN_RESULTS.md)
+
+### Human Git / GitHub → Git for autonomous agents
+
+![Human Git versus Git for autonomous agents](docs/assets/diagrams/03-human-git-vs-agent-git.svg)
+
+[Canonicality primitives](docs/CANONICALITY_PRIMITIVES.md) · [prior-art boundary](docs/CANONICALITY_PRIOR_ART.md)
+
+### Actors, use cases and trust boundaries
+
+![MADGRIX use cases and trust boundaries](docs/assets/diagrams/04-use-cases-trust-boundaries.svg)
+
+[Architecture](docs/ARCHITECTURE.md) · [production deployment](docs/PRODUCTION_DEPLOYMENT.md) · [known limitations](docs/KNOWN_LIMITATIONS.md)
+
+### MCP in real time
+
+![MADGRIX MCP real-time flow](docs/assets/diagrams/05-mcp-real-time.svg)
+
+[MCP agent tools](docs/MCP_AGENT_TOOLS.md) · [module memory](docs/MODULE_MEMORY.md)
+
+### Evidence, testing and measured results
+
+![MADGRIX evidence and test results](docs/assets/diagrams/06-evidence-testing-results.svg)
+
+[Live results](docs/LIVE_RUN_RESULTS.md) · [scale](docs/SCALE.md) · [module memory](docs/MODULE_MEMORY.md)
+
+> **Accuracy note:** the current signing path is Ed25519 + DSSE with an out-of-band pinned public key. KMS/HSM/Sigstore-backed key management is future hardening, not a current claim.
+
+---
+
+## From human Git to Git for agents
+
+Git itself is still useful: content-addressed objects, commits, trees, ancestry, branches and distributed transport remain excellent primitives. The change is the **operating model around Git**. Human-era Git/GitHub assumes people interpret intent, review a manageable number of changes, and decide when a branch may merge. Autonomous agents can operate at machine speed, in large numbers, and may be stale, mistaken or adversarial.
+
+| Human-era Git / GitHub | What breaks in the agent era | Git4agents / MADGRIX |
+|---|---|---|
+| Branch rules answer **who may merge** | An allowed actor can still produce the wrong or stale state | **CanonCap / exact-state permit** binds authority to one task, baseline, candidate, evidence, policy and destination HEAD |
+| PR + social review | Hundreds or thousands of agents can act concurrently | **WorkClaims + shared work graph** expose intent, scope, ownership and interactions |
+| Humans interpret “done” | An agent can falsely claim completion | **Frozen task + independent evaluation + TheUstad baseline gate** separate claims from evidence |
+| Tests/evaluation are assumed trustworthy | An agent can modify test or evaluation material | **Independent evaluation + `no_eval_tampering` + quarantine** |
+| Git catches textual conflicts | Agents can overlap semantically without a line conflict | **Semantic clearance + conflict reports** cover paths, symbols, contracts, interfaces, state and impact |
+| Merge permission is reusable actor authority | State may change between review and promotion | **Single-use exact-state permit** expires if destination HEAD moves |
+| Git history tells what changed | It does not explain why one state earned canonical status | **Hash-chained ledger + causal proof graph + signed DSSE bundle** |
+| Human reviewers are the final trust boundary | High-frequency agent fleets exceed manual review capacity | **Non-compensatory machine gates**, with humans reserved for ambiguity/escalation |
+
+```text
+Human Git:   identity / branch permission -> review -> merge
+Git4agents:  intent -> bounded work -> evidence -> verdict -> exact-state authority -> canonicalize -> prove
+```
+
+The short version: **Git decides ancestry. Git4agents decides canonicality.**
 
 ## Architecture
 
@@ -71,16 +113,14 @@ flowchart LR
 
 | Product | Used for |
 |---|---|
-| **Workers** | `madgrix` Worker: REST API, `/mcp` endpoint, landing page, `/board` (repo mall, live mode, `/board/new`), read-only work graph |
-| **Durable Objects** (SQLite) | `TaskAuthority`, one per task: claims, ledger and permits in storage transactions. `ModuleAgent`: per-module memory. `PromotionContainer`: container host |
-| **Queues** | `madgrix-events`: Artifacts push events, at-least-once, deduplicated per event key in the DO |
-| **Workflows** | `madgrix-promotion`: one instance per permit (the permit id is the instance id), which drives the container promotion |
-| **Containers** | `madgrix-promotion` image: trusted `promote.sh` / `rebase.sh`, which write only the permitted SHA |
-| **Artifacts** | Git repositories: the canonical `starter-repo` and per-task contender forks with scoped tokens |
+| **Workers** | `madgrix` Worker: REST API, `/mcp` endpoint, landing page, Trust Board/Mission Control, read-only work graph, Queue consumer |
+| **Durable Objects** | `TaskAuthority`: per-task authoritative state, claims, conflict reports, ledger, evaluations, verdicts and permits. `ModuleAgent`: per-module deterministic memory. `PromotionContainer`: promotion runtime host |
+| **Queues** | `madgrix-events`: Artifacts push events, at-least-once, deduplicated per event key in TaskAuthority |
+| **Workflows** | `madgrix-promotion`: one instance per permit; permit id is the Workflow instance id |
+| **Containers** | `madgrix-promotion` image: trusted `promote.sh` / `rebase.sh`; sole canonical Git writer |
+| **Artifacts** | Git substrate: canonical repository and per-task contender forks with scoped credentials |
 
-More detail is in [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). CanonCap, the causal proof graph, conflict capsules and the canonicality routes are described in [docs/CANONICALITY.md](docs/CANONICALITY.md).
-
-More detail: [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), canonicality primitives (CanonCap, `/why`, conflict capsules) in [docs/CANONICALITY.md](docs/CANONICALITY.md).
+More detail is in [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/CANONICALITY.md](docs/CANONICALITY.md).
 
 ### Fork crew → promote
 
@@ -129,6 +169,51 @@ stateDiagram-v2
 
 <sub>`claimed`, `candidate`, `rejected`, `permitted` and `promoted` are descriptive names for points in the ledger; the stored contender status values are `forked`, `submitted`, `quarantined`, `revoked`, `released`.</sub>
 
+## MCP in real time
+
+`POST /mcp` is a stateless agent interface over the **same Worker + TaskAuthority authority plane**. It is intentionally not a second policy plane.
+
+| MCP tool | Purpose |
+|---|---|
+| `inspect_task` | Read frozen task, baseline, policy and status |
+| `inspect_work_graph` | Read agents, claims, scopes, dependencies and composition state |
+| `check_clearance` | Advisory semantic/conflict view; never grants authority |
+| `claim_work` | Register scoped intent/work |
+| `open_contender` | Open governed contender state/fork |
+| `read_ledger` | Read task events/evidence metadata |
+| `verify_permit` | Read-only validation of stored permit relation |
+
+There is deliberately **no MCP tool** for promotion, permit issuance, verdict/evidence submission, composition authority, rebase authority, finalization or direct canonical Git writes.
+
+```mermaid
+sequenceDiagram
+    participant IDE as Claude/Cursor/VS Code
+    participant MCP as Worker /mcp
+    participant T as TaskAuthority DO
+    participant A as Artifacts
+    IDE->>MCP: inspect_task / inspect_work_graph
+    MCP->>T: read shared task state
+    T-->>IDE: task + claims + conflicts
+    IDE->>MCP: check_clearance
+    T-->>IDE: CLEAR / CAUTION / HOLD / REVIEW
+    IDE->>MCP: claim_work
+    MCP->>T: record scoped claim
+    IDE->>A: code + commit + push contender state
+    A-->>MCP: push event via Queue
+    MCP->>T: reconcile exact SHA
+    IDE->>MCP: read_ledger / verify_permit
+```
+
+Deep dive: [docs/MCP_AGENT_TOOLS.md](docs/MCP_AGENT_TOOLS.md).
+
+## Screenshots (live Worker)
+
+| Landing | Mission Control / Trust Board |
+|---|---|
+| ![landing](docs/assets/landing.png) | ![Trust Board](docs/assets/trust-board.png) |
+
+The Trust Board is a single-page judge/operator projection over stored authority records: canonical state, causal proof graph, live work/claim status, evidence and permit chains. It does **not** create authority or perform signature verification itself.
+
 ## How Git4agents answers the four questions
 
 ### …need to know what other agents are doing?
@@ -153,15 +238,15 @@ Each task keeps a hash-chained ledger: intent, claims, composition, evidence, ve
 
 | What | Result | Source |
 |---|---|---|
-| Live run `task_6cdb2087a04e389edc87de1c` | 9/9 steps · `concurrent_agents=3` (1 parent + 2 sub-agents) · TheUstad **FINAL VERIFIED** | live Cloudflare, [/board](https://madgrix.ygathuku96.workers.dev/board) |
+| Live run `task_6cdb2087a04e389edc87de1c` | 9/9 steps · `concurrent_agents=3` (1 parent + 2 sub-agents) · TheUstad **FINAL VERIFIED** | live Cloudflare, `/board` |
 | Promoted SHA = reviewed SHA | `fc9c1e7084ad14067012a56e68bd8f4c5bdc85c2` | signed bundle, offline `verify` → **VERIFIED** |
 | Ledger | 25 hash-chained entries, from `authority_created` to `promotion_succeeded` | same bundle |
 | Earlier verified run | `task_0090714a2ca6e6c167ec410a` → promoted `3b71d3a` | [docs/LIVE_RUN_RESULTS.md](docs/LIVE_RUN_RESULTS.md) |
 | Big-crew live run `task_99f82dca34d72b85dc1ee92a` | **13 agents committing** (1 parent + 12 sub-agents, one fork) on `ext-ky` (sindresorhus/ky, MIT) → TheUstad **FINAL VERIFIED**, promoted `d5bcf01`, offline `verify` → **VERIFIED** | [docs/SCALE.md](docs/SCALE.md) |
-| Live cheater run `task_6dce45beed286be0230b754e` | 3 sibling contenders on `ext-ky`: `cheater-cal` edited `test/base-url.ts` → evaluator `no_eval_tampering=false`, `scope_compliance=false` → ledger #19 `contender_quarantined` (trigger `eval_file_modification`, recovered from the public payload hash); `false-done-fay` said done, hidden oracle **failed**; honest `f27946233a53a3eadc0ea058ae2ee56ac683c558` promoted, offline `verify` **VERIFIED**; one-byte-tampered bundle → `ledger chain FAIL`, **NOT VERIFIED** | `node scripts/live-cheater-demo.mjs run` |
-| Adversarial trials | 26/26 blocked, 0 unauthorized promotions | `npm run attack:lab` (local, real modules) |
-| Module memory | second pass re-reads **25 of 184 files (13.6%)** after one edit | [docs/MODULE_MEMORY.md](docs/MODULE_MEMORY.md); vscode benchmark in [docs/MODULE_MEMORY_BENCHMARK.md](docs/MODULE_MEMORY_BENCHMARK.md) |
-| Test suite | 439 tests, all passing | `npm test` |
+| Live cheater run `task_6dce45beed286be0230b754e` | 3 sibling contenders on `ext-ky`: `cheater-cal` edited `test/base-url.ts` → evaluator `no_eval_tampering=false`, `scope_compliance=false` → ledger #19 `contender_quarantined` (trigger `eval_file_modification`); `false-done-fay` said done, hidden oracle **failed**; honest contender promoted, offline `verify` **VERIFIED**; one-byte-tampered bundle → `ledger chain FAIL`, **NOT VERIFIED** | `node scripts/live-cheater-demo.mjs run` |
+| Adversarial trials | **26/26 blocked, 0 unauthorized promotions** | `npm run attack:lab` |
+| Module memory | second pass re-reads **25 of 184 files (13.6%)** after one edit | [docs/MODULE_MEMORY.md](docs/MODULE_MEMORY.md); benchmark in [docs/MODULE_MEMORY_BENCHMARK.md](docs/MODULE_MEMORY_BENCHMARK.md) |
+| Test suite | **439 tests, all passing** | `npm test` |
 
 ## Scale: the coordination layer, live
 
@@ -178,6 +263,27 @@ One task, N scripted agents against the live Worker. Each is enrolled, claims a 
 > One Git4agents task coordinated 3,000 of 3,000 live agents (4,997 of 5,000) with every seeded path overlap flagged, zero false flags, an intact hash-chained ledger, and no fork per agent. Separately, a live crew of 13 agents committed on one fork and its combined SHA was verified and promoted.
 
 The limit is latency on the task's single Durable Object (claims are serialized), not correctness.
+
+## Documentation map
+
+| Topic | Document |
+|---|---|
+| Trust zones, stages and code map | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Cloudflare products and deployment evidence | [CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md) |
+| Canonicality, CanonCap, proof graph, conflict capsule | [CANONICALITY.md](docs/CANONICALITY.md) |
+| Canonicality primitive/spec surface | [CANONICALITY_PRIMITIVES.md](docs/CANONICALITY_PRIMITIVES.md) |
+| Prior-art / novelty boundary | [CANONICALITY_PRIOR_ART.md](docs/CANONICALITY_PRIOR_ART.md) |
+| Exact MCP protocol surface | [MCP_AGENT_TOOLS.md](docs/MCP_AGENT_TOOLS.md) |
+| ModuleAgent / module memory | [MODULE_MEMORY.md](docs/MODULE_MEMORY.md) |
+| Module-memory benchmark | [MODULE_MEMORY_BENCHMARK.md](docs/MODULE_MEMORY_BENCHMARK.md) |
+| Recorded live E2E evidence | [LIVE_RUN_RESULTS.md](docs/LIVE_RUN_RESULTS.md) |
+| Live scale methodology/results | [SCALE.md](docs/SCALE.md) |
+| 10K logical fleet proof | [FLEET_10K.md](docs/FLEET_10K.md) |
+| Cloudflare readiness | [CLOUDFLARE_LIVE_READINESS.md](docs/CLOUDFLARE_LIVE_READINESS.md) |
+| Production deployment | [PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md) |
+| Competition demo/runbook | [FINAL_COMPETITION_DEMO.md](docs/FINAL_COMPETITION_DEMO.md) · [DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md) |
+| Known limitations / claim boundary | [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) |
+| Video narrative | [VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md) |
 
 ## Quick start (local, no Cloudflare account)
 
