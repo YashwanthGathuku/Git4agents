@@ -98,7 +98,7 @@ ATTACK_LAB_VERIFIED
 
 This is the existing local adversarial protocol harness made judge-readable; it is **not** presented as live Cloudflare fault injection.
 
-Specs and the precise non-novelty boundary: [`docs/CANONICALITY_PRIMITIVES.md`](docs/CANONICALITY_PRIMITIVES.md) · [`docs/CANONICALITY_PRIOR_ART.md`](docs/CANONICALITY_PRIOR_ART.md)
+Specs and the precise non-novelty boundary: [`docs/CANONICALITY_PRIMITIVES.md`](CANONICALITY_PRIMITIVES.md) · [`docs/CANONICALITY_PRIOR_ART.md`](CANONICALITY_PRIOR_ART.md)
 
 ## Live competition proof
 
@@ -127,7 +127,7 @@ offline bundle VERIFIED
 
 The competition crew is **one parent coordinator plus two scripted sub-agents on one contender fork**. They demonstrate concurrent process coordination and authority; they are not presented as evidence of LLM coding intelligence.
 
-Evidence: [`docs/LIVE_RUN_RESULTS.md`](docs/LIVE_RUN_RESULTS.md) · [`docs/JOURNAL_2026-10-14_LIVE_RUN.md`](docs/JOURNAL_2026-10-14_LIVE_RUN.md)
+Evidence: [`docs/LIVE_RUN_RESULTS.md`](LIVE_RUN_RESULTS.md) · [`docs/JOURNAL_2026-10-14_LIVE_RUN.md`](JOURNAL_2026-10-14_LIVE_RUN.md)
 
 ## Live Cloudflare architecture
 
@@ -163,7 +163,7 @@ Only the promotion path receives canonical write authority.
 
 The deployed competition branch exposes an MCP interface for coding agents. MCP is an **agent interface**, not a second policy path: the wrapper delegates tool calls back through the same core router, identity checks and `TaskAuthority` state machine used by REST.
 
-See [`docs/MCP_AGENT_TOOLS.md`](docs/MCP_AGENT_TOOLS.md).
+See [`docs/MCP_AGENT_TOOLS.md`](MCP_AGENT_TOOLS.md).
 
 ## Why this exists
 
@@ -287,9 +287,9 @@ The new proof routes are read-only and restricted to `MADGRIX_PUBLIC_DEMO_TASK_I
 - Evaluation-domain authentication is a distinct bearer secret, not mTLS/workload identity.
 - Competition signing is Ed25519 DSSE with a pinned public key; production KMS/HSM/Sigstore lifecycle is future hardening.
 - The recorded fork-crew uses local Git worktrees and scoped credentials; those worktrees are not claimed as adversarial microVM isolation.
-- CanonCap, Conflict Capsule and Causal Proof Graph are **candidate MADGRIX abstractions**. Capability security, proof-carrying change, provenance DAGs and structured conflicts have prior art; see [`docs/CANONICALITY_PRIOR_ART.md`](docs/CANONICALITY_PRIOR_ART.md).
+- CanonCap, Conflict Capsule and Causal Proof Graph are **candidate MADGRIX abstractions**. Capability security, proof-carrying change, provenance DAGs and structured conflicts have prior art; see [`docs/CANONICALITY_PRIOR_ART.md`](CANONICALITY_PRIOR_ART.md).
 
-See [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) for the longer list.
+See [`docs/KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md) for the longer list.
 
 ## Repository map
 
@@ -322,16 +322,16 @@ docs/                        architecture, live evidence, security, demo, resear
 
 ## Key documents
 
-- [`docs/FINAL_COMPETITION_DEMO.md`](docs/FINAL_COMPETITION_DEMO.md) — final 5–10 minute recording runbook
-- [`docs/CANONICALITY_PRIMITIVES.md`](docs/CANONICALITY_PRIMITIVES.md) — the new canonicality framing
-- [`docs/CANONICALITY_PRIOR_ART.md`](docs/CANONICALITY_PRIOR_ART.md) — explicit novelty boundary
-- [`docs/CLOUDFLARE_ARCHITECTURE.md`](docs/CLOUDFLARE_ARCHITECTURE.md) — deployed architecture/status
-- [`docs/LIVE_RUN_RESULTS.md`](docs/LIVE_RUN_RESULTS.md) — all four live runs
-- [`docs/MCP_AGENT_TOOLS.md`](docs/MCP_AGENT_TOOLS.md) — MCP agent interface
-- [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) — current limits/non-claims
-- [`docs/SECURITY.md`](docs/SECURITY.md) — threat model
+- [`docs/FINAL_COMPETITION_DEMO.md`](FINAL_COMPETITION_DEMO.md) — final 5–10 minute recording runbook
+- [`docs/CANONICALITY_PRIMITIVES.md`](CANONICALITY_PRIMITIVES.md) — the new canonicality framing
+- [`docs/CANONICALITY_PRIOR_ART.md`](CANONICALITY_PRIOR_ART.md) — explicit novelty boundary
+- [`docs/CLOUDFLARE_ARCHITECTURE.md`](CLOUDFLARE_ARCHITECTURE.md) — deployed architecture/status
+- [`docs/LIVE_RUN_RESULTS.md`](LIVE_RUN_RESULTS.md) — all four live runs
+- [`docs/MCP_AGENT_TOOLS.md`](MCP_AGENT_TOOLS.md) — MCP agent interface
+- [`docs/KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md) — current limits/non-claims
+- [`docs/SECURITY.md`](SECURITY.md) — threat model
 - [`keys/README.md`](keys/README.md) — pinned authority-key model
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](../LICENSE).
