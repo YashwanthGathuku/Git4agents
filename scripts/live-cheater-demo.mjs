@@ -99,12 +99,22 @@ export async function matchQuarantinePayload(payloadHash, contenderId, evidenceH
 	return null;
 }
 
-/** Flip one byte in the middle of a buffer (the tampered-bundle check). @param {Buffer} buf */
+/**
+ * Change exactly one byte of the bundle and keep it valid JSON: the first
+ * lowercase hex digit at or after the middle that sits inside a run of hex
+ * digits (a hash) is swapped for a different hex digit.
+ * @param {Buffer} buf
+ */
 export function flipByte(buf) {
 	const out = Buffer.from(buf);
-	const i = Math.floor(out.length / 2);
-	out[i] = out[i] === 0x41 ? 0x42 : 0x41;
-	return out;
+	const hex = (/** @type {number} */ c) => (c >= 0x30 && c <= 0x39) || (c >= 0x61 && c <= 0x66);
+	for (let i = Math.floor(out.length / 2); i < out.length - 1; i++) {
+		if (hex(out[i]) && hex(out[i - 1]) && hex(out[i + 1])) {
+			out[i] = out[i] === 0x30 ? 0x31 : 0x30;
+			return out;
+		}
+	}
+	throw new Error("no hex digit to flip");
 }
 
 function agent() {
@@ -148,10 +158,26 @@ async function run() {
 		p.stdout.on("data", (d) => { s += d; process.stdout.write(d); });
 		p.on("close", (code) => resolve({ code, s }));
 	});
-	const m = /\{[\s\S]*"task_id"[\s\S]*\}\s*$/.exec(out.s);
-	const summary = m ? JSON.parse(m[0]) : null;
-	const taskId = summary?.task_id ?? /task_[0-9a-f]{24}/.exec(out.s)?.[0];
+	const taskId = taskIdFrom(out.s);
 	console.error(`\n== live e2e exit ${out.code}; task ${taskId} ==`);
+	await report(taskId, out.s, out.code === 0);
+	process.exitCode = out.code ?? 1;
+}
+
+/** The task id from live-e2e stdout (its final summary names it). @param {string} stdout */
+export function taskIdFrom(stdout) {
+	const all = [...stdout.matchAll(/"task_id":\s*"(task_[0-9a-f]{24})"/g)].map((x) => x[1]);
+	return all.at(-1) ?? /task_[0-9a-f]{24}/.exec(stdout)?.[0];
+}
+
+/**
+ * Post-run checks against the live task: ledger, contender status,
+ * quarantine trigger, TheUstad on a wrong baseline, tampered-bundle verify.
+ * @param {string | undefined} taskId @param {string} stdout @param {boolean} promoted
+ */
+async function report(taskId, stdout, promoted) {
+	const env = process.env;
+	const out = { s: stdout, code: promoted ? 0 : 1 };
 	if (taskId) {
 		const base = String(env.MADGRIX_BASE_URL).replace(/\/$/, "");
 		const ledger = await getJson(`${base}/tasks/${taskId}/ledger`);
@@ -194,12 +220,16 @@ async function run() {
 		process.stderr.write(r.stdout + r.stderr);
 		console.error(`  verify exit ${r.status}`);
 	}
-	process.exitCode = out.code ?? 1;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
 	if (process.argv[2] === "agent") agent();
 	else if (process.argv[2] === "run") await run();
+	else if (process.argv[2] === "report") {
+		// Re-run the post-run checks on a finished task: report <task_id> <live-e2e log>.
+		const log = readFileSync(String(process.argv[4]), "utf8");
+		await report(process.argv[3], log, /MADGRIX_LIVE_E2E_OK/.test(log));
+	}
 	else {
 		console.error("usage: live-cheater-demo.mjs agent|run");
 		process.exit(2);

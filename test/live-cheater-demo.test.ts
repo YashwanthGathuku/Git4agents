@@ -22,9 +22,10 @@ test("tool-status log is v1: session record then gapless seq", () => {
 });
 
 test("flipByte changes exactly one byte", () => {
-	const a = Buffer.from("hello world bundle");
+	const a = Buffer.from(JSON.stringify({ x: "ab".repeat(20), y: "deadbeefcafe0123" }));
 	const b = flipByte(a);
 	assert.equal([...a].filter((x, i) => x !== b[i]).length, 1);
+	JSON.parse(b.toString());
 });
 
 test("quarantine trigger is recovered from a ledger payload hash", async () => {
