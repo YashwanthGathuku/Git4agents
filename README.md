@@ -2,7 +2,7 @@
 
 **The trust layer for agent-written code.**
 
-[![tests](https://img.shields.io/badge/tests-439%20passing-2ea44f)](test)
+[![tests](https://img.shields.io/badge/tests-446%20passing-2ea44f)](test)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://madgrix.ygathuku96.workers.dev)
 
@@ -14,8 +14,27 @@ Git was designed around human developers, social review, branch permissions, and
 
 **Live:** https://madgrix.ygathuku96.workers.dev  
 **Trust board:** https://madgrix.ygathuku96.workers.dev/board  
-**Replay:** https://madgrix.ygathuku96.workers.dev/replay  
+**＋ Bring your repo:** https://madgrix.ygathuku96.workers.dev/board/new  
 **MCP endpoint:** `POST https://madgrix.ygathuku96.workers.dev/mcp`
+
+[![Git4agents landing page: hanging marquee, isometric repo mall preview, how-it-works steps, receipts of the real runs](docs/assets/landing.png)](https://madgrix.ygathuku96.workers.dev/)
+
+## Why Git4agents: strongest features
+
+Judging criteria tags: **[O]** originality · **[C]** concurrency, coordination & conflict · **[E]** ease of use.
+
+- **Blind commit-then-reveal evaluation**: verifiers commit to references before candidates exist, then reveal and sign. **[O]**
+- **Mandatory, non-overridable gates**: a failed gate loses even with perfect scores; the board's Override button answers *"Refused: mandatory gates cannot be waived"*. **[O][C]**
+- **Mechanical cheater quarantine**: editing eval files taints the bundle and revokes write access; live cheater run, ledger #19 `contender_quarantined` (`eval_file_modification`). **[C]**
+- **Exact-SHA, single-use signed permits**: only the reviewed commit can reach canonical history; a moved HEAD expires the permit. **[O][C]**
+- **Offline verify with a pinned key**: every promotion ships a signed bundle; a one-byte-tampered copy is **NOT VERIFIED**. **[O][E]**
+- **Fork crew with path claims and overlap flagging**: 13 agents (1 parent + 12 sub-agents) on ky, 12 overlaps flagged, promoted `d5bcf018194b`. **[C]**
+- **3,000-agent claim scale run**: 3,000/3,000 claims granted, 149/149 seeded overlaps flagged, 0 false flags, intact ledger chain. **[C]**
+- **Module memory cards**: one card per module, held by per-module Durable Object agents that sleep between requests and wake on routed changes; a second pass re-read 25 of 184 files. **[O][C]**
+- **Same-file combine**: per-file three-way merge turns disjoint edits, even in one file, into one COMPOSED commit; overlapping lines become CONFLICTED, never dropped. **[C]**
+- **TheUstad done-check**: a "done" commit that is not on the frozen baseline is `FINAL FALSIFIED` and nothing is written. **[C]**
+- **Bring any public repo into the live mall**: [/board/new](https://madgrix.ygathuku96.workers.dev/board/new) imports it, freezes a task, claims and forks per agent, and opens `/board?live=1`. **[E]**
+- **All on Cloudflare**: Workers, Durable Objects, Queues, Containers, Workflows and Artifacts. **[E]**
 
 ---
 
@@ -116,7 +135,7 @@ MADGRIX uses Cloudflare primitives as distinct trust and execution roles rather 
 
 | Cloudflare primitive | MADGRIX role |
 |---|---|
-| **Workers** | Public HTTP control plane, REST routes, `/mcp`, `/replay`, board/graph views, Queue consumer, auth boundary |
+| **Workers** | Public HTTP control plane, REST routes, `/mcp`, `/board` (+ live mode, `/board/new`), graph views, Queue consumer, auth boundary |
 | **Durable Objects — `TaskAuthority`** | Per-task authoritative state: frozen task, WorkClaims, conflict reports, evaluations, ledger, verdicts, permits, and promotion records |
 | **Durable Objects — `PromotionContainer`** | Hosts/coordinates the trusted promotion runtime path |
 | **Durable Objects — `ModuleAgent`** | Deployed per-module memory owner; stores deterministic module cards and wake metadata |
@@ -298,12 +317,10 @@ What cannot be bypassed:
 
 ---
 
-## Live Trust Board and replay
+## Live Trust Board (the repo mall)
 
 The deployed Worker includes judge-facing visualizations in addition to the protocol APIs.
 
-**Trust board:** https://madgrix.ygathuku96.workers.dev/board  
-**Replay:** https://madgrix.ygathuku96.workers.dev/replay
 
 [![Trust board mall: live cheater run](docs/assets/board-cheater.gif)](https://madgrix.ygathuku96.workers.dev/board?scenario=cheater&autoplay=1)
 
@@ -311,13 +328,19 @@ The board renders each repository as a 2.5D isometric mall: agents enter through
 
 **Live mode** (`/board?live=1`, also the default with no `scenario`) polls the public-safe `GET /tasks/:id/board-state` projection. It exposes whitelisted read-only fields only; no service tokens or contender credentials are rendered.
 
+**Open your own repo in the mall** ([/board/new](https://madgrix.ygathuku96.workers.dev/board/new)): paste a public GitHub URL, an instruction and (optionally) the paths to claim. With the demo access key, the Worker imports the repo into Artifacts (binding `import()`), freezes a real task with your instruction (`handleCreateTask`), registers one claim per agent from your instruction and forks one Artifacts repo per agent (`handleClaim` + `handleCreateContender`, the same first steps as `scripts/run-contenders.mjs`), then redirects to the live mall. It does **not** run agents; commits and gate runs come from the agent runners, and the mall shows only what the authority records. Agent secrets and fork tokens are discarded server-side. Protected by a demo key (Worker secret), a per-IP limit (1 import / 10 min, best effort) and a 20 MB repo cap. Verified end to end: `sindresorhus/is-plain-obj` (MIT) → `task_f0936a321f6c5844dd2bc2af`, 2 claims, 2 forks, 8 ledger entries.
+
 | Crew | Scale |
 |---|---|
 | ![board crew](docs/assets/board-crew.png) | ![board scale](docs/assets/board-scale.png) |
 | Cheater | Promoted |
 | ![board cheater](docs/assets/board-cheater.png) | ![board crew promoted](docs/assets/board-crew-done.png) |
+| Price-tag card (real agent details) | Live mode (real task imported via /board/new) |
+| ![board price-tag card](docs/assets/board-file-modal.png) | ![board live mode](docs/assets/board-live.png) |
+| /board/new: bring your repo | |
+| ![board new](docs/assets/board-new.png) | |
 
-The `/replay` live scenario replays a **recorded real Cloudflare run**. Its attack tab is explicitly labeled as simulated from the local test harness; the separate live cheater run is the live quarantine counterpart.
+The old `/replay` page is retired and 301-redirects to `/board`. Simulated attacks live in the local test harness (`npm run attack:lab`); the live cheater run on `/board` is the live counterpart.
 
 ---
 
@@ -327,7 +350,7 @@ The `/replay` live scenario replays a **recorded real Cloudflare run**. Its atta
 
 | Evidence | Result | Where |
 |---|---|---|
-| Test suite | **439 passing** | `npm test` |
+| Test suite | **446 passing** | `npm test` |
 | Type checking | available | `npm run typecheck` |
 | Attack lab | **26/26 blocked, 0 unauthorized promotions** | `npm run attack:lab` |
 | Offline verification | signed bundles end in **VERIFIED**; tampered bundle ends **NOT VERIFIED** | `npm run verify -- --trust-key keys/authority.pub <bundle>` |
@@ -417,7 +440,7 @@ The external demo repository `ext-ky` is `sindresorhus/ky` (MIT) imported into C
 
 - Live runs are **evidence**, not a production reliability statistic.
 - Recorded live agents are **scripted processes**, not evidence of LLM coding intelligence; the project demonstrates the coordination, governance, canonicalization, and proof substrate.
-- The replay attack tab is simulated from real protocol modules; the live cheater run separately demonstrates live quarantine behavior.
+- Simulated attacks run in the local test harness (`npm run attack:lab`); the live cheater run separately demonstrates live quarantine behavior.
 - TheUstad in the fork-crew flow is a frozen-baseline integrity/done gate, not the semantic judge. Independent evaluation and blind verification judge the candidate.
 - Overlapping WorkClaims are **flagged**, not automatically refused. Scale numbers are for the coordination layer; commits scale through fork crews rather than one fork per agent.
 - One `TaskAuthority` Durable Object serializes a task; claim latency rises with N. Separate tasks use separate Durable Objects.
