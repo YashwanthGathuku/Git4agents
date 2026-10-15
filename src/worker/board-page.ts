@@ -53,16 +53,47 @@ header h1{font:700 21px/1 Georgia,"Iowan Old Style",serif;margin:0}header h1 em{
 .btns{display:flex;gap:8px}.btn{flex:1;padding:9px;border-radius:10px;border:0;font:inherit;font-weight:700;cursor:pointer}.btn.go{background:var(--ok);color:#fff}.btn.go:disabled{background:#e8dccb;color:#a8998a;cursor:not-allowed}.btn.no{background:#f7e1dc;color:#a1453d;border:1.5px dashed #dfa59c;cursor:not-allowed}
 .refuse{color:var(--bad);font-weight:700;font-size:12.5px;margin-top:6px;min-height:17px}
 .chip{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:5px;margin:1px;background:#efe5d4}.chip.p{background:#dcefdc;color:#2f6e44}.chip.f{background:#f7d9d5;color:#a1453d}
+
+/* mall-native chrome: hanging marquee, receipt printing from the register, price-tag popovers */
+html,body{background:#f6ecd9}
+#app{display:block;position:relative;height:100vh;padding:0}
+#mall{position:absolute;inset:0;border:0;border-radius:0;background:linear-gradient(#fde9c9,#f6f0e2)}
+#mall svg{position:absolute;left:0;right:0;top:118px;bottom:0;height:calc(100% - 118px)}
+#marquee{position:absolute;z-index:20;left:50%;top:0;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;pointer-events:none}
+#marquee>*{pointer-events:auto}
+.chain{position:absolute;top:0;width:3px;height:16px;background:repeating-linear-gradient(#8a6a45 0 4px,transparent 4px 6px)}.chain.l{left:22%}.chain.r{right:22%}
+#marquee .board{margin-top:14px;background:linear-gradient(#7a5233,#5e3d24);border:3px solid #3e2716;border-radius:14px;padding:8px 22px 9px;box-shadow:0 8px 0 #3e271633,0 14px 24px #3e271622;color:#fff3dc;text-align:center;position:relative;min-width:720px}
+.bulbs{position:absolute;inset:4px;border-radius:10px;pointer-events:none;background:radial-gradient(circle,#ffe08a 0 2.2px,transparent 2.6px) 0 0/16px 16px;-webkit-mask:linear-gradient(#000 0 5px,transparent 5px calc(100% - 5px),#000 calc(100% - 5px));mask:linear-gradient(#000 0 5px,transparent 5px calc(100% - 5px),#000 calc(100% - 5px))}
+#marquee h1{font:700 25px/1.1 Georgia,serif;margin:3px 0 0;letter-spacing:.5px;color:#fff3dc}#marquee h1 em{color:#ffcf7a}
+.tagline{font-size:11.5px;color:#e9cfa8;letter-spacing:1px;margin:1px 0 5px}
+#marquee .sc{justify-content:center;flex-wrap:wrap}#marquee .sc button{border-radius:6px;background:#fff3dc;border:2px solid #3e2716;font-weight:700;font-size:12.5px;padding:3px 10px;box-shadow:0 2px 0 #3e2716}
+#marquee .sc button[aria-pressed=true]{background:#ffcf7a;color:#3e2716}
+#marquee .ctl{margin:6px 0 0;justify-content:center;color:#e9cfa8;font-size:12px}#marquee .ctl button,#marquee .ctl select{padding:2px 9px;font-size:12px;background:#fff3dc}#marquee .ctl a{color:#ffd99a}
+#stats{display:flex;gap:10px;margin-top:0;justify-content:center}
+#stats .st{position:relative;margin-top:16px;border-radius:8px;border:2px solid #3e2716;background:#fffaf0;padding:3px 11px 4px;min-width:96px;text-align:center;box-shadow:0 3px 0 #3e271633;transform:rotate(-1deg)}
+#stats .st:nth-child(even){transform:rotate(1.2deg)}
+#stats .st:before,#stats .st:after{content:"";position:absolute;top:-16px;width:2px;height:16px;background:#8a6a45}#stats .st:before{left:18px}#stats .st:after{right:18px}
+#stats .st small{font-size:9.5px}#stats .st div{font-size:16px}
+#legend{left:50%;transform:translateX(-50%);bottom:6px;z-index:5}
+#register{position:absolute;left:18px;bottom:16px;width:330px;height:min(56vh,470px);display:flex;flex-direction:column;justify-content:flex-end;z-index:10}
+#register .receipt{flex:1;margin:0 26px;border-radius:0;border:0;border-left:1px solid #eadcc5;border-right:1px solid #eadcc5;box-shadow:0 0 18px #3e27161a;background:#fffdf8 repeating-linear-gradient(#fffdf8 0 23px,#fbf4e6 23px 24px)}
+#register .receipt:after{top:-8px;bottom:auto;transform:rotate(180deg)}
+.till{background:linear-gradient(#5e6b5a,#46523f);border:3px solid #2f382a;border-radius:12px 12px 16px 16px;padding:8px 10px 10px;box-shadow:0 8px 16px #0003}
+.till-top{font:700 10px ui-monospace,Menlo,monospace;color:#d8e6c8;letter-spacing:2px;text-align:center;margin-bottom:6px;background:#1f2a1c;border-radius:5px;padding:4px}
+.till .btn{border-radius:8px;box-shadow:0 3px 0 #0005}.till .refuse{color:#ffb4a8}
+.tagcard{position:absolute;z-index:30;width:300px;max-height:60vh;overflow:auto;background:#fff6dc;border:2px solid #b98f4f;border-radius:6px 22px 22px 6px;padding:12px 16px 12px 30px;box-shadow:4px 6px 0 #b98f4f44,0 14px 30px #3e271626;transform:rotate(-1.5deg);font-size:12.5px}
+.tagcard:before{content:"";position:absolute;left:10px;top:16px;width:10px;height:10px;border-radius:50%;background:#f6ecd9;border:2px solid #b98f4f}
+.tagcard .x{position:absolute;right:10px;top:6px;border:0;background:none;font-size:16px;cursor:pointer;color:#8a6a45}
+.tagcard h3{font:700 15px Georgia,serif;margin:0 0 5px}.tagcard .row{margin:2px 0}.tagcard .row b{color:#8a7a6d;font-weight:600;display:inline-block;min-width:70px}
 </style></head><body><div id="app">
-<header><h1>Git4agents <em>· the repo mall</em> <span style="font-size:13px;color:var(--dim);font-family:inherit;font-style:normal">trust board</span></h1><div class="sc" id="sc"></div><span id="badge" class="badge real">REAL</span>
-<div class="ctl"><button id="play">▶ Play</button><button id="restart" title="restart">⟲</button><label>speed <select id="speed"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>×</label><label><input type="checkbox" id="loop"> loop</label><a href="/">home</a>·<a href="/replay">replay</a></div></header>
-<section id="stats"></section>
-<main id="mall"><svg id="svg" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Mall floor plan"></svg><div id="legend"></div></main>
-<aside id="side">
-<div class="receipt"><h2>LEDGER RECEIPT</h2><div class="sub" id="rxsub"></div><div id="rx"></div></div>
-<div class="panel" id="det"><h3>Click a shop or a shopper</h3><div class="row" style="color:var(--dim)">Shops are the repo's directories, shelf items are the files agents claimed. Every detail shown is from the recorded run.</div></div>
-<div class="panel"><div class="btns"><button class="btn go" id="approve" disabled>Approve &amp; promote</button><button class="btn no" id="override">Override gates</button></div><div class="refuse" id="refuse"></div></div>
-</aside></div>
+<header id="marquee"><i class="chain l"></i><i class="chain r"></i><div class="board"><div class="bulbs"></div><h1>Git4agents <em>repo mall</em></h1><div class="tagline">the trust board · <span id="badge" class="badge real">REAL</span></div>
+<div class="sc" id="sc"></div>
+<div class="ctl"><button id="play">▶ Play</button><button id="restart" title="restart">⟲</button><label>speed <select id="speed"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>×</label><label><input type="checkbox" id="loop"> loop</label><a href="/">home</a>·<a href="/replay">replay</a>·<a href="/board/new">open your repo</a></div></div>
+<section id="stats"></section></header>
+<main id="mall"><svg id="svg" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Mall floor plan"></svg><div id="legend"></div>
+<div id="register"><div class="receipt"><h2>LEDGER RECEIPT</h2><div class="sub" id="rxsub"></div><div id="rx"></div></div>
+<div class="till"><div class="till-top">REGISTER · checkout lane 1</div><div class="btns"><button class="btn go" id="approve" disabled>Approve &amp; promote</button><button class="btn no" id="override">Override gates</button></div><div class="refuse" id="refuse"></div></div></div>
+<div class="tagcard" id="det" hidden></div></main>
 <script>
 (function(){
 var D=__DATA__;
@@ -92,7 +123,8 @@ function led(cls,seq,label){var e=(sc.ledger||[])[seq];rx(cls,seq,label||(e?e.ki
 function ledKind(cls,kind,label){(sc.ledger||[]).forEach(function(e){if(e.kind===kind)led(cls,e.seq,label)})}
 function stat(i,v,c){var n=document.querySelectorAll(".st")[i];if(!n)return;n.querySelector("div").textContent=v;n.className="st "+(c||"")}
 function stats(arr){$("stats").innerHTML=arr.map(function(a){return '<div class="st '+(a[2]||"")+'"><small>'+esc(a[0])+'</small><div>'+esc(a[1])+'</div></div>'}).join("")}
-function det(h){$("det").innerHTML=h}
+var lastPt=[500,300];svg.addEventListener("click",function(e){var r=$("mall").getBoundingClientRect();lastPt=[e.clientX-r.left,e.clientY-r.top]},true);
+function det(h,quiet){var d=$("det");if(quiet)return;d.innerHTML='<button class="x" aria-label="close">×</button>'+h;d.hidden=false;var r=$("mall").getBoundingClientRect();d.style.left=Math.max(360,Math.min(r.width-320,lastPt[0]+18))+"px";d.style.top=Math.max(130,Math.min(r.height-260,lastPt[1]-40))+"px";d.querySelector(".x").onclick=function(){d.hidden=true}}
 function short(s){return s?String(s).slice(0,12):"—"}
 // ---------- the building (2.5D isometric) ----------
 function P(x,y){return [(x-y)*0.53+390,(x+y)*0.265+150]}
@@ -161,8 +193,7 @@ function floor(){svg.innerHTML="";
  // exit doors and trees
  var ex=up(P(810,300),8);poly(null,[up(P(805,262),8),up(P(805,338),8),up(P(805,338),56),up(P(805,262),56)],"#a9d6e8",{stroke:"#5b8fa6","stroke-width":2});T("EXIT",{x:ex[0],y:ex[1]-54,"text-anchor":"middle","font-size":10,"font-weight":800,fill:"#5b7a4f"});
  [[30,40],[30,140],[30,460],[30,560],[200,610],[420,610],[640,610],[1010,200],[1010,420]].forEach(function(t,i){var b3=P(t[0],t[1]);S("ellipse",{cx:b3[0]+6,cy:b3[1]+3,rx:13,ry:5,fill:"#0002"});S("rect",{x:b3[0]-2,y:b3[1]-14,width:4,height:14,fill:"#8a6a45"});S("circle",{cx:b3[0],cy:b3[1]-22,r:12,fill:i%2?"#8fbf7f":"#a3c98a",stroke:"#6e9e60"});S("circle",{cx:b3[0]-4,cy:b3[1]-26,r:4,fill:"#c2e0ad"})});
- LAYER.fx=S("g");LAYER.people=S("g");
- svg.appendChild(at);
+ LAYER.fx=S("g");svg.appendChild(at);LAYER.people=S("g");
 }
 function drawShop(sh){var g=sh.g;while(g.firstChild)g.removeChild(g.firstChild);var x=sh.x,y=sh.y,w=sh.w,d=sh.d,L=sh.level,bad=sh.bad,c=bad?"#a99d90":AWN[sh.i%AWN.length];
  var H=24+L*14,front=y+d;shade(g,x,y,w,d,18);
@@ -197,7 +228,7 @@ function person(id,i,label){var g=S("g",{"class":"who still"},LAYER.people);var 
  var bag=S("g",{opacity:0},g);S("rect",{x:6,y:-3,width:8,height:9,rx:1.5,fill:"#f2cc8f",stroke:"#b98f4f"},bag);S("path",{d:"M8 -3v-2h4v2",fill:"none",stroke:"#b98f4f"},bag);
  T(label||id,{x:0,y:24,"text-anchor":"middle","font-size":9.5,"font-weight":700,fill:"#3b2f2a",stroke:"#fffaf0","stroke-width":3,"paint-order":"stroke"},g);
  var p={id:id,g:g,x:20,y:300,bag:bag,color:c};place(p);g.onclick=function(){showAgent(id)};people[id]=p;return p}
-function flagAt(x,y,txt,color){var q=up(P(x,y),40);var g=S("g",{"class":"pop"},LAYER.fx);var gg=S("g",{"class":"flag"},g);var w=txt.length*5.8+14;
+function flagAt(x,y,txt,color,lift){var q=up(P(x,y),lift||40);var g=S("g",{"class":"pop"},LAYER.fx);var gg=S("g",{"class":"flag"},g);var w=txt.length*5.8+14;
  S("rect",{x:q[0]-w/2,y:q[1]-22,width:w,height:17,rx:8,fill:color||"#e0a43a"},gg);T(txt,{x:q[0],y:q[1]-10,"text-anchor":"middle","font-size":10,"font-weight":800,fill:"#fff"},gg);return g}
 function lamp(i,ok){var l=$("lamp"+i);if(l)l.setAttribute("fill",ok?"#4f9d69":"#d2544c");var g=$("glow"+i);if(g)g.setAttribute("opacity",ok?1:0)}
 function lampsReset(){for(var i=0;i<3;i++){var l=$("lamp"+i);if(l)l.setAttribute("fill","#e4d8c4");var g=$("glow"+i);if(g)g.setAttribute("opacity",0)}}
@@ -235,7 +266,7 @@ function crew(){var A=sc.agents,ev=sc.evals[0];buildShops(A);
  A.slice(1).forEach(function(a,i){var f=a.paths[0],sh=shopOf(f),s=sh.slots[f];W(260,function(){var p=people[a.id];p.y=270+((i*7)%60);place(p);move(p,[[110,p.y],[190,s[1]+18],[s[0]+(i%2?8:-8),s[1]+18]],1900)})});
  W(1700,function(){ledKind("","claim_registered","claim_registered");A.slice(1).forEach(function(a){var sh=shopOf(a.paths[0]);take(sh,a.paths[0]);setLevel(sh,2);people[a.id].bag.setAttribute("opacity",1)})});
  W(1500,function(){var seen={};sc.overlaps.forEach(function(o){var sub=o.a==="parent"?o.b:o.a,ag=A.filter(function(x){return x.id===sub})[0];if(!ag)return;var sh=shopOf(ag.paths[0]);if(seen[sh.name])return;seen[sh.name]=1;
-   flagAt(sh.x+sh.w-30,sh.y+sh.d,"overlap ×"+sc.overlaps.filter(function(q){var s2=q.a==="parent"?q.b:q.a;var g=A.filter(function(x){return x.id===s2})[0];return g&&shopOf(g.paths[0])===sh}).length,"#e0a43a")});
+   flagAt(sh.x+sh.w-14,sh.y+4,"⚠ overlap ×"+sc.overlaps.filter(function(q){var s2=q.a==="parent"?q.b:q.a;var g=A.filter(function(x){return x.id===s2})[0];return g&&shopOf(g.paths[0])===sh}).length,"#e0a43a",sh.level>=3?84:64)});
   rx("amb",null,sc.overlaps.length+" overlaps flagged (each sub ∩ parent fork scope)","AMBER")});
  W(2000,function(){A.forEach(function(a,i){move(people[a.id],[[580,150+((i*23)%300)],[748,180+(i%3)*82+20]],1800)});ledKind("","composition_recorded","composition_recorded · "+sc.composed)});
  W(1200,function(){ledKind("","contender_registered");ledKind("","evaluation_submitted","evaluation_submitted · "+short(ev.sha))});
@@ -258,7 +289,7 @@ function cheater(){var A=sc.agents,byA={};sc.evals.forEach(function(e){byA[e.age
  W(400,function(){led("",0);led("",1);led("",2)});
  A.forEach(function(a,i){W(500,function(){var p=people[a.id];p.y=285+i*14;place(p);move(p,[[138,330+i*6],[190,slot[1]+20],[slot[0]-26+i*26,slot[1]+20]],2000)})});
  W(1900,function(){ledKind("ok","agents_enrolled","agents_enrolled · 3");ledKind("","claim_registered","claim_registered");take(hs,"source/MADGRIX_HONEST.md");setLevel(hs,2);
-  flagAt(slot[0],hs.y+hs.d,"3 at one shelf · overlap ×"+sc.overlaps.length,"#e0a43a");rx("amb",null,"overlap: all three claim source/MADGRIX_HONEST.md","AMBER")});
+  flagAt(hs.x+hs.w-40,hs.y+4,"⚠ 3 at one shelf · overlap ×"+sc.overlaps.length,"#e0a43a",66);rx("amb",null,"overlap: all three claim source/MADGRIX_HONEST.md","AMBER")});
  W(1500,function(){people["honest-ana"].bag.setAttribute("opacity",1);var tsl=ts.slots["test/base-url.ts"];move(people["cheater-cal"],[[190,tsl[1]+20],[tsl[0],tsl[1]+20]],1600);rx("bad",null,"cheater-cal sneaks to test/ and edits test/base-url.ts","eval file")});
  W(1800,function(){take(ts,"test/base-url.ts");people["cheater-cal"].bag.setAttribute("opacity",1);
   move(people["false-done-fay"],[[580,260],[748,372]],1700);move(people["honest-ana"],[[580,220],[748,290]],1800);move(people["cheater-cal"],[[580,200],[748,206]],2000)});
@@ -333,7 +364,7 @@ function load(id){if(id==="live")return startLive();LIVE.on=false;clearTimeout(L
  document.querySelectorAll(".sc button").forEach(function(b){b.setAttribute("aria-pressed",b.dataset.id===sc.id)});
  $("badge").textContent=sc.badge+" data · illustrated";$("badge").className="badge "+(sc.badge==="REAL"?"real":"viz");
  common();({crew:crew,cheater:cheater,scale:scale})[sc.id]();
- det('<h3>'+esc(sc.label)+'</h3><div class="row"><b>task</b><span class="mono">'+esc(sc.task)+'</span></div><div class="row" style="color:var(--dim)">Click a shop (directory) or a shopper (agent) for the recorded details.</div>')}
+ $("det").hidden=true;det('<h3>'+esc(sc.label)+'</h3><div class="row"><b>task</b><span class="mono">'+esc(sc.task)+'</span></div><div class="row" style="color:var(--dim)">Click a shop (directory) or a shopper (agent) for the recorded details.</div>',true)}
 function step(){if(si>=steps.length){if($("loop").checked&&playing){var id=sc.id;load(id);playing=true;$("play").textContent="❚❚ Pause"}else{stop();return}}
  var s=steps[si++];s.fn();if(playing)timer=setTimeout(step,s.ms/speed())}
 function runTo(n){instant=true;tweens=[];while(si<n&&si<steps.length)steps[si++].fn();instant=false;Object.keys(people).forEach(function(k){people[k].g.classList.add("still")})}
