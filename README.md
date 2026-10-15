@@ -63,9 +63,26 @@ Each task keeps a hash-chained ledger: intent, claims, composition, evidence, ve
 | Promoted SHA = reviewed SHA | `fc9c1e7084ad14067012a56e68bd8f4c5bdc85c2` | signed bundle, offline `verify` → **VERIFIED** |
 | Ledger | 25 hash-chained entries, from `authority_created` to `promotion_succeeded` | same bundle |
 | Earlier verified run | `task_0090714a2ca6e6c167ec410a` → promoted `3b71d3a` | [docs/LIVE_RUN_RESULTS.md](docs/LIVE_RUN_RESULTS.md) |
+| Big-crew live run `task_99f82dca34d72b85dc1ee92a` | **13 agents committing** (1 parent + 12 sub-agents, one fork) on `ext-ky` (sindresorhus/ky, MIT) → TheUstad **FINAL VERIFIED**, promoted `d5bcf01`, offline `verify` → **VERIFIED** | [docs/SCALE.md](docs/SCALE.md) |
 | Adversarial trials | 26/26 blocked, 0 unauthorized promotions | `npm run attack:lab` (local, real modules) |
 | Module memory | second pass re-reads **25 of 184 files (13.6%)** after one edit | [docs/MODULE_MEMORY.md](docs/MODULE_MEMORY.md); vscode benchmark in [docs/MODULE_MEMORY_BENCHMARK.md](docs/MODULE_MEMORY_BENCHMARK.md) |
-| Test suite | 428 tests across 133 suites, all passing | `npm test` |
+| Test suite | 432 tests, all passing | `npm test` |
+
+## Scale: the coordination layer, live
+
+One task, N scripted agents against the live Worker. Each is enrolled, claims a distinct path with its intent, and every 20th also claims its neighbour's path. Overlaps are **FLAGGED** to the claimant (risk + explanation), not refused. This is the coordination layer: **no Artifacts fork per agent** (commits go through fork crews, one fork per crew). Full method and caps: [docs/SCALE.md](docs/SCALE.md).
+
+| N | Claims granted | Seeded overlaps flagged | False flags | p50 / p95 ms | Ledger chain |
+|---|---|---|---|---|---|
+| 100 | 100/100 | 4/4 | 0 | 106 / 216 | OK |
+| 1,000 | 1,000/1,000 | 49/49 | 0 | 291 / 658 | OK |
+| 2,000 | 2,000/2,000 | 99/99 | 0 | 593 / 1,447 | OK |
+| 3,000 | 3,000/3,000 | 149/149 | 0 | 827 / 2,407 | OK |
+| 5,000 | 4,997/5,000 (3 client socket resets) | 249/249 | 0 | 1,829 / 4,849 | OK |
+
+> One Git4agents task coordinated 3,000 of 3,000 live agents (4,997 of 5,000) with every seeded path overlap flagged, zero false flags, an intact hash-chained ledger, and no fork per agent. Separately, a live crew of 13 agents committed on one fork and its combined SHA was verified and promoted.
+
+The limit is latency on the task's single Durable Object (claims are serialized), not correctness.
 
 ## Quick start
 
