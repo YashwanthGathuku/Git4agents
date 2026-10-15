@@ -244,7 +244,7 @@ Before pressing Record:
 
 ```text
 Repository:
-https://github.com/YashwanthGathuku/Madgrix
+https://github.com/YashwanthGathuku/Git4agents
 
 Live Mission Control after final hardening deploy:
 https://madgrix.ygathuku96.workers.dev/tasks/task_79b1f9d610e94d8e95daa503/graph

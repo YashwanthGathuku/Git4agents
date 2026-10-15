@@ -111,7 +111,7 @@ footer{padding:0 24px 18px;color:var(--dim);font-size:14px}a{color:var(--acc)}
 <main><section><div class="lanes" id="lanes"></div>
 <div id="now"><h2>Press play</h2><p>Step through the recorded run.</p><div class="gates" id="gates"></div><div id="prog"><i></i></div></div></section>
 <aside><h3 id="lh">Hash-chained ledger</h3><div id="ledger"></div><h3>Events</h3><div id="log"></div></aside></main>
-<footer>Ledger kinds, timestamps and hashes are copied verbatim from the run's signed bundle; tokens, payloads and signatures are omitted. <a href="/">Home</a> · <a href="https://github.com/YashwanthGathuku/Madgrix">Source</a></footer>
+<footer>Ledger kinds, timestamps and hashes are copied verbatim from the run's signed bundle; tokens, payloads and signatures are omitted. <a href="/">Home</a> · <a href="https://github.com/YashwanthGathuku/Git4agents">Source</a></footer>
 <script id="replay-data" type="application/json">${safeJson(data)}</script>
 <script>
 (function(){

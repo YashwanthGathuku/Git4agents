@@ -11,7 +11,7 @@ describe("public landing routes", () => {
 		assert.match(home.headers.get("content-type") ?? "", /text\/html/);
 		const text = await home.text();
 		assert.match(text, /Git4agents/);
-		assert.match(text, /github\.com\/YashwanthGathuku\/Madgrix/);
+		assert.match(text, /github\.com\/YashwanthGathuku\/Git4agents/);
 		const health = await worker.fetch(new Request("https://madgrix.test/health"), h.env as any);
 		assert.equal(health.status, 200);
 		assert.deepEqual(await health.json(), { ok: true, service: "madgrix", protocol: "git4agents" });

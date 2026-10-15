@@ -1762,7 +1762,7 @@ async function handleModuleAgent(env: Env, action: string, request: Request): Pr
 	return doRpc(stub, `/${action}`, { body: parsed.body }).then((r) => json(r.body, r.status));
 }
 
-const REPO_URL = "https://github.com/YashwanthGathuku/Madgrix";
+const REPO_URL = "https://github.com/YashwanthGathuku/Git4agents";
 
 function escapeHtml(text: string): string {
 	return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);

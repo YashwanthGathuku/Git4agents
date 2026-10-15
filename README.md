@@ -2,40 +2,118 @@
 
 **The trust layer for agent-written code.**
 
-[![tests](https://img.shields.io/badge/tests-428%20passing-2ea44f)](test) [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://madgrix.ygathuku96.workers.dev)
+[![tests](https://img.shields.io/badge/tests-439%20passing-2ea44f)](test) [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://madgrix.ygathuku96.workers.dev)
 
 Agents can now write code faster than anyone can review it. Branch permissions say *who* may merge, not *which exact state* earned the right to ship.
-Git4agents lets any number of agents work in parallel, but only one exact commit, checked by gates nobody can override, can become canonical.
+Git4agents lets many agents work in parallel, but only one exact commit, checked by gates nobody can override, can become canonical.
 Every promotion leaves a signed bundle you can verify offline, so "it passed review" is checkable instead of a claim.
 
-**Live:** https://madgrix.ygathuku96.workers.dev · **▶ Replay of a verified live run:** https://madgrix.ygathuku96.workers.dev/replay · **Demo video:** *coming soon* (script: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md)) · **Attack scenarios:** [/replay?scenario=sim](https://madgrix.ygathuku96.workers.dev/replay?scenario=sim)
+**Live:** https://madgrix.ygathuku96.workers.dev · **▶ Replay of a verified live run:** https://madgrix.ygathuku96.workers.dev/replay · **Attack scenarios (simulated):** [/replay?scenario=sim](https://madgrix.ygathuku96.workers.dev/replay?scenario=sim) · **Demo video:** _link to be added_ (script: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md))
+
+![Live cheater run: cheater-cal quarantined (eval_file_modification), TheUstad FINAL FALSIFIED, tampered bundle NOT VERIFIED](docs/assets/live-cheater-quarantine.gif)
+
+<sub>Recorded live against the deployed Worker, task `task_6dce45beed286be0230b754e`: the cheating contender is quarantined from the public ledger, a false "done" is FALSIFIED by TheUstad, and a one-byte-tampered bundle fails offline verify.</sub>
 
 ---
 
-## 60-second tour
-
-A parent agent forks once. Sub-agents claim paths and commit on that fork. The push travels through a Cloudflare Queue to the task's Durable Object. A separate evaluation domain checks the exact candidate, blind verifiers vote, and only then does a single-use permit let that exact SHA reach canonical history.
+## Architecture
 
 ```mermaid
 flowchart LR
-    P[parent agent] -- fork once --> F[(Artifacts task fork)]
-    A[sub-api: claims src/api/**] -- commit --> F
-    U[sub-ui: claims src/ui/**] -- commit --> F
-    F -- push event --> Q[[Queue madgrix-events]]
-    Q --> T{{TaskAuthority<br/>Durable Object<br/>hash-chained ledger}}
-    T --> E[Evaluation domain<br/>mandatory gates]
-    E --> V[Blind verifiers<br/>commit → reveal → sign]
-    V --> S{Verdict seam}
-    S -- ACCEPT --> K[Single-use permit<br/>exact SHA + tree + HEAD]
-    K --> W[Workflow + Container<br/>promote]
-    W --> C[(canonical main)]
-    W --> B[signed bundle → offline verify]
-    S -- tamper / failed gate --> X[QUARANTINED / REJECT]
+    subgraph Agents
+      P[parent agent]
+      S1[sub-agent A]
+      S2[sub-agent B]
+    end
+    subgraph CF[Cloudflare]
+      W[Worker madgrix<br/>REST · /mcp · /replay · /graph]
+      DO{TaskAuthority<br/>Durable Object<br/>claims · ledger · permits}
+      Q[[Queue madgrix-events]]
+      ART[(Artifacts<br/>canonical repo + task forks)]
+      WF[Workflow madgrix-promotion]
+      CT[Container promote.sh / rebase.sh]
+    end
+    EV[Evaluation domain<br/>evaluate-candidate.ts]
+    P -- claims / contender --> W --> DO
+    S1 -- claim + commit --> ART
+    S2 -- claim + commit --> ART
+    ART -- push event --> Q --> W
+    W -- ingest event --> DO
+    EV -- fetch exact SHA --> ART
+    EV -- evidence bundle --> W
+    W -- permit --> WF --> CT -- write permitted SHA --> ART
+    DO -- signed bundle --> V[offline verify<br/>pinned key]
 ```
 
-Watch it happen with real data: **[/replay](https://madgrix.ygathuku96.workers.dev/replay)** replays the 25-entry ledger of live run `task_6cdb2087…` step by step (play, pause, speed). A second tab shows a tamperer, a false "done", a moved HEAD and an override attempt, **simulated from the test harness**.
+| Product | Used for |
+|---|---|
+| **Workers** | `madgrix` Worker: REST API, `/mcp` endpoint, landing page, `/replay`, read-only work graph |
+| **Durable Objects** (SQLite) | `TaskAuthority`, one per task: claims, ledger and permits in storage transactions. `ModuleAgent`: per-module memory. `PromotionContainer`: container host |
+| **Queues** | `madgrix-events`: Artifacts push events, at-least-once, deduplicated per event key in the DO |
+| **Workflows** | `madgrix-promotion`: one instance per permit (the permit id is the instance id), which drives the container promotion |
+| **Containers** | `madgrix-promotion` image: trusted `promote.sh` / `rebase.sh`, which write only the permitted SHA |
+| **Artifacts** | Git repositories: the canonical `starter-repo` and per-task contender forks with scoped tokens |
 
-## What happens when agents…
+More detail is in [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). CanonCap, the causal proof graph, conflict capsules and the canonicality routes are described in [docs/CANONICALITY.md](docs/CANONICALITY.md).
+
+More detail: [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), canonicality primitives (CanonCap, `/why`, conflict capsules) in [docs/CANONICALITY.md](docs/CANONICALITY.md).
+
+### Fork crew → promote
+
+```mermaid
+sequenceDiagram
+    participant C as Control plane
+    participant P as Parent agent
+    participant S as Sub-agents (N)
+    participant A as Artifacts fork
+    participant T as TaskAuthority DO
+    participant E as Evaluation domain
+    participant V as Blind verifiers
+    participant WF as Workflow + Container
+    C->>T: POST /tasks (freeze intent + baseline, enroll agents)
+    V->>T: commit references (before any candidate exists)
+    P->>T: claim scope · POST /contenders (one fork)
+    S->>T: claim distinct paths
+    S->>A: commit in own worktree
+    P->>P: compose (3-way per file) → TheUstad FINAL VERIFIED?
+    P->>A: push combined SHA
+    A-->>T: push event via Queue
+    E->>A: fetch exact SHA, run gates
+    E->>T: evidence bundle (tamper ⇒ quarantine)
+    V->>T: reveal + signed reports
+    C->>T: verdict seam → single-use permit
+    T->>WF: promote exact SHA if HEAD unchanged
+    WF->>A: fast-forward canonical
+    T-->>C: authority-signed bundle → offline verify
+```
+
+### Contender lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> claimed: WorkClaim registered
+    claimed --> forked: contender registered (fork + scoped token)
+    forked --> candidate: push observed via Queue
+    candidate --> quarantined: evaluator reports eval file changes (eval_file_modification)
+    candidate --> rejected: a mandatory gate fails (e.g. hidden oracle)
+    candidate --> permitted: verdict ACCEPT → single-use permit
+    permitted --> promoted: Workflow writes the exact SHA
+    permitted --> candidate: HEAD moved → EXPIRED_HEAD_MOVED, rebase to new SHA
+    quarantined --> [*]: token revoked, evidence tainted
+    promoted --> [*]: signed bundle
+```
+
+<sub>`claimed`, `candidate`, `rejected`, `permitted` and `promoted` are descriptive names for points in the ledger; the stored contender status values are `forked`, `submitted`, `quarantined`, `revoked`, `released`.</sub>
+
+## Screenshots (live Worker)
+
+| Landing | Replay: mid-run |
+|---|---|
+| ![landing](docs/assets/landing.png) | ![replay mid-run](docs/assets/replay-midrun.png) |
+| **Replay: finished (offline verify VERIFIED)** | **Attack tab (simulated): QUARANTINED** |
+| ![replay finished](docs/assets/replay-finished.png) | ![simulated quarantine](docs/assets/replay-sim-quarantined.png) |
+
+## How Git4agents answers the four questions
 
 ### …need to know what other agents are doing?
 Before writing, each agent registers a **WorkClaim** (paths, symbols, intent) with the task's `TaskAuthority` Durable Object. Claims are ledgered, and overlapping claims are classified as a conflict risk. Agents read the shared picture through `GET /tasks/:id/context`, the read-only work graph at `/tasks/:id/graph`, or MCP tools (`inspect_work_graph`, `check_clearance`, `claim_work`). In the live run, `sub-api` held `src/api/**` and `sub-ui` held `src/ui/**` on one fork.
@@ -67,7 +145,7 @@ Each task keeps a hash-chained ledger: intent, claims, composition, evidence, ve
 | Live cheater run `task_6dce45beed286be0230b754e` | 3 sibling contenders on `ext-ky`: `cheater-cal` edited `test/base-url.ts` → evaluator `no_eval_tampering=false`, `scope_compliance=false` → ledger #19 `contender_quarantined` (trigger `eval_file_modification`, recovered from the public payload hash); `false-done-fay` said done, hidden oracle **failed**; honest `f27946233a53a3eadc0ea058ae2ee56ac683c558` promoted, offline `verify` **VERIFIED**; one-byte-tampered bundle → `ledger chain FAIL`, **NOT VERIFIED** | `node scripts/live-cheater-demo.mjs run` |
 | Adversarial trials | 26/26 blocked, 0 unauthorized promotions | `npm run attack:lab` (local, real modules) |
 | Module memory | second pass re-reads **25 of 184 files (13.6%)** after one edit | [docs/MODULE_MEMORY.md](docs/MODULE_MEMORY.md); vscode benchmark in [docs/MODULE_MEMORY_BENCHMARK.md](docs/MODULE_MEMORY_BENCHMARK.md) |
-| Test suite | 436 tests, all passing | `npm test` |
+| Test suite | 439 tests, all passing | `npm test` |
 
 ## Scale: the coordination layer, live
 
@@ -85,53 +163,71 @@ One task, N scripted agents against the live Worker. Each is enrolled, claims a 
 
 The limit is latency on the task's single Durable Object (claims are serialized), not correctness.
 
-## Canonicality primitives
+## Quick start (local, no Cloudflare account)
 
-CanonCap, causal proof graphs (`/why`), conflict capsules and the canonicality projection: see [docs/CANONICALITY.md](docs/CANONICALITY.md).
-
-## Quick start
+Requires Node 22+ and git.
 
 ```bash
-git clone https://github.com/YashwanthGathuku/Madgrix && cd Madgrix
+git clone https://github.com/YashwanthGathuku/Git4agents && cd Git4agents
 npm ci
-npm test              # 428 tests
+npm test              # 439 tests
+npm run typecheck
 npm run slice         # full protocol locally: claims → quarantine → blind verdict → permit → promote → signed bundle
+npm run headmove      # HEAD moves under a permit: stale SHA refused, rebased SHA promoted
+npm run demo:memory   # module memory: second pass re-reads only affected modules
 npm run attack:lab    # 26 adversarial trials against the real modules
+
+# offline verify of real live-run bundles against the pinned authority key
+npm run verify -- --trust-key keys/authority.pub docs/bundles/live-run-4.bundle
+npm run verify -- --trust-key keys/authority.pub docs/bundles/live-crew-13.bundle
+npm run verify -- --trust-key keys/authority.pub docs/bundles/live-cheater.bundle
 ```
 
-The live deployment and the live end-to-end harness (`npm run live:e2e`) need a Cloudflare account with Artifacts. See [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md).
+Each `verify` prints the check transcript and ends with `VERIFIED`. Change any byte of a bundle and it ends with `NOT VERIFIED`.
 
-## What only Git4agents does
+## Live flows (your own Cloudflare account)
 
-- **Blind commit-then-reveal evaluation.** Verifiers bind their references before any candidate exists.
-- **Mandatory, non-compensatory gates.** No score, vote or operator overrides a failed integrity gate.
-- **Mechanical quarantine.** Tampering with evaluation files quarantines the contender, taints its evidence and revokes its token.
-- **Exact-SHA, single-use promotion permits.** Each permit is bound to the SHA, tree, evidence, policy and destination HEAD, and is consumed once.
-- **Offline `verify` with a pinned key.** Anyone can re-check a promotion without trusting the server.
-- **TheUstad done-check.** "Done" is `FINAL VERIFIED` or `FINAL FALSIFIED`, never self-reported.
+These need a deployed Worker, an Artifacts namespace with a baseline repo, the `madgrix-events` queue with a push subscription, and the three service tokens. See [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md) and [docs/CLOUDFLARE_LIVE_READINESS.md](docs/CLOUDFLARE_LIVE_READINESS.md). Load secrets from a file; never echo them.
+
+Required by `scripts/live-e2e.ts`: `MADGRIX_BASE_URL`, `MADGRIX_CONTROL_SERVICE_TOKEN`, `MADGRIX_AGENT_SERVICE_TOKEN`, `MADGRIX_EVALUATION_SERVICE_TOKEN`, `MADGRIX_BASELINE_REPO`, `MADGRIX_BASELINE_COMMIT`, `MADGRIX_INTENT`, `MADGRIX_BEHAVIOR_CONTRACT`, `MADGRIX_HIDDEN_TEST_COMMAND`, `MADGRIX_CLAIM_PATHS` (or `MADGRIX_CLAIM_TEMPLATE`), plus `MADGRIX_AGENT_COMMAND` in sibling-contender mode. Useful optional ones: `MADGRIX_QUEUE_ID`, `MADGRIX_ARTIFACTS_NAMESPACE` (default `default`), `MADGRIX_FORK_CREW_CONFIG`, `MADGRIX_FLEET_CONFIG`, `MADGRIX_TRUST_KEY`, `MADGRIX_BUNDLE_PATH`, `MADGRIX_EVENT_TIMEOUT_MS`.
+
+```bash
+set -a; . ./secrets.env; set +a          # MADGRIX_*_SERVICE_TOKEN values, kept out of the shell history
+
+# 1. Fork crew (MADGRIX_AGENT_IDS unset): one parent fork, 12 path-scoped sub-agents, TheUstad, promote, verify
+MADGRIX_BASE_URL=https://<your-worker>.workers.dev \
+MADGRIX_BASELINE_REPO=ext-ky MADGRIX_BASELINE_COMMIT=<sha> \
+MADGRIX_FORK_CREW_CONFIG=configs/git4agents-fork-crew-big.json \
+MADGRIX_FLEET_CONFIG=configs/git4agents-fork-crew-big.yaml \
+MADGRIX_CLAIM_PATHS='<the 12 crew paths>,.madgrix/**' \
+MADGRIX_INTENT='…' MADGRIX_BEHAVIOR_CONTRACT='…' MADGRIX_HIDDEN_TEST_COMMAND='…' \
+MADGRIX_TRUST_KEY=keys/authority.pub \
+npm run live:e2e
+
+# 2. Cheater demo (sibling contenders honest / cheater / false-done; sets its own AGENT_IDS, AGENT_COMMAND, CLAIM_PATHS, HIDDEN_TEST_COMMAND)
+MADGRIX_BASE_URL=… MADGRIX_BASELINE_REPO=ext-ky MADGRIX_BASELINE_COMMIT=<sha> \
+MADGRIX_INTENT='…' MADGRIX_BEHAVIOR_CONTRACT='…' MADGRIX_TRUST_KEY=keys/authority.pub \
+MADGRIX_BUNDLE_PATH=/tmp/cheater.bundle \
+node scripts/live-cheater-demo.mjs run
+
+# 3. Scale: N scripted agents claim paths on one task (no forks)
+MADGRIX_BASE_URL=… MADGRIX_BASELINE_REPO=<repo> MADGRIX_BASELINE_COMMIT=<sha> \
+node scripts/scale-agents.mjs --mode live --ramp 10,100,500,1000 --concurrency 25
+node scripts/scale-agents.mjs --mode local --ramp 10,100,1000   # no account needed
+```
+
+`ext-ky` is `sindresorhus/ky` (MIT) imported into Artifacts with `cf artifacts namespaces repos import ext-ky --namespace default --url https://github.com/sindresorhus/ky.git --branch main`.
 
 ## Honest limits
 
-- Four recorded live runs are evidence, not a reliability or scale statistic. The live crew is one parent plus **two scripted sub-agents**, not LLMs.
-- The `/replay` attack tab is **simulated from the local test harness**, not from live Cloudflare fault injection.
-- TheUstad checks the frozen baseline and a clean parent. It is not a semantic judge of the code.
-- In the live run, the first combined push was not applied, and the harness pushed again (shown in the replay). A deliberate live Queue redelivery test is not claimed.
-- Evaluation-domain auth is a bearer secret, not mTLS or workload identity. Signing is Ed25519 DSSE with a pinned key, with no KMS or HSM yet.
+- Live runs are evidence, not a reliability statistic. All live agents are **scripted** (shell commands or `scripts/live-cheater-demo.mjs`), not LLMs.
+- The `/replay` attack tab is **simulated from the local test harness**, not live fault injection. The live cheater run is the live counterpart for quarantine.
+- TheUstad only checks the frozen baseline and a clean parent; it is not a semantic judge. In the cheater video, the FALSIFIED check runs TheUstad locally on a clone with a wrong baseline, not inside the Worker.
+- Overlapping claims are **flagged**, not refused. Scale numbers are for the claim/coordination layer on one task; commits go through fork crews, not one fork per agent. Claim latency grows with N because one Durable Object serializes a task.
+- In live runs the first push was sometimes not observed and the harness pushed again (logged). A deliberate Queue redelivery test is not claimed.
+- Evaluation-domain auth is a bearer secret, not mTLS. Signing is Ed25519 with a pinned key, no KMS/HSM.
 - Fork-crew worktrees use scoped credentials but are not adversarial microVM isolation.
-- The longer list is in [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
-
-## Architecture (Cloudflare products used)
-
-| Product | Used for |
-|---|---|
-| **Workers** | `madgrix` Worker: REST API, `/mcp` endpoint, landing page, `/replay`, read-only work graph |
-| **Durable Objects** (SQLite) | `TaskAuthority`, one per task: claims, ledger and permits in storage transactions. `ModuleAgent`: per-module memory. `PromotionContainer`: container host |
-| **Queues** | `madgrix-events`: Artifacts push events, at-least-once, deduplicated per event key in the DO |
-| **Workflows** | `madgrix-promotion`: one instance per permit (the permit id is the instance id), which drives the container promotion |
-| **Containers** | `madgrix-promotion` image: trusted `promote.sh` / `rebase.sh`, which write only the permitted SHA |
-| **Artifacts** | Git repositories: the canonical `starter-repo` and per-task contender forks with scoped tokens |
-
-More detail is in [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). CanonCap, the causal proof graph, conflict capsules and the canonicality routes are described in [docs/CANONICALITY.md](docs/CANONICALITY.md).
+- More: [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
 
 ## License
 
