@@ -81,6 +81,7 @@ note "Deploying exact competition tree"
 printf 'The cf CLI may ask you to confirm the plan. Review it and approve only if the Worker is %s.\n' "$WORKER_NAME" >&2
 cf deploy \
   --message "Cloudflare Git competition final ${LOCAL_HEAD}" \
+  --tag "competition-final" \
   --containers-rollout immediate
 
 note "Confirming required secret bindings still exist after deployment"
