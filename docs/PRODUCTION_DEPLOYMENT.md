@@ -28,7 +28,7 @@ No real secret values appear below. Nothing here has been deployed.
 ```bash
 # from the repository root
 
-# 1. Prereqs (account <CLOUDFLARE_ACCOUNT_ID> — see ../SETUP_STATUS.md)
+# 1. Prereqs (account <CLOUDFLARE_ACCOUNT_ID>)
 cf queues create madgrix-events         # queue must exist before deploy
 # cf artifacts namespaces ...           # namespace "default" already exists
 
@@ -70,7 +70,7 @@ Sigstore signing remains future hardening (spec 4 §6).
 | Claim-input contract Worker↔DO | ✅ fixed | Bug found during boot test: Worker required `claim.work_id` but the DO rejects inputs carrying `work_id` (authority assigns it) — the route could never succeed. Fixed to accept `ClaimInput` (no `work_id`); body with `work_id` now 400s at the edge, matching the DO |
 | DO binding + export in config | ✅ added | Verified helper shapes against vendored `@cloudflare/config` (not guessed): `exports.durableObject({ storage: "sqlite" })`, `bindings.durableObject({ worker: "seam", exportName: "TaskAuthority" })`; queue consumer `triggers.queue({ name: "seam-events", ... })` |
 | Local Artifacts binding callable | ✅ (local simulation only) | `POST /tasks` → `baseline_repo_not_found` 404: binding works locally, but the local simulation is empty — it cannot see the remote `default` namespace |
-| Remote Artifacts binding (`dev: { remote: true }`) | ❌ blocked-by-sandbox | workerd outbound TLS fails through this sandbox's egress proxy (`WRONG_VERSION_NUMBER`); documented in `../SETUP_STATUS.md`. The `cf` CLI works (proxy-aware). Do not attempt a proxy workaround from here |
+| Remote Artifacts binding (`dev: { remote: true }`) | ❌ blocked-by-sandbox | workerd outbound TLS fails through this sandbox's egress proxy (`WRONG_VERSION_NUMBER`); documented in `the setup notes (in git history)`. The `cf` CLI works (proxy-aware). Do not attempt a proxy workaround from here |
 | **Live Artifacts control plane via `cf` CLI** | ✅ validated 2026-10-01 | Repo create returns a repo-scoped token; `git push` with `Authorization: Bearer <token>` extraHeader works; scratch repos created and deleted cleanly |
 | Scoped-token enforcement (live) | ✅ validated 2026-10-01 | Read-scoped token: clone/fetch OK, push → 403 "Insufficient permissions". Write-scoped token: push OK. Scopes are enforced server-side, not advisory |
 | Token revocation (live) — quarantine's kill switch | ✅ validated 2026-10-01 | `tokens revoke <id> --namespace default -f` → subsequent push with the same token → 403 "Invalid or expired token" (effective within ~10s). Revoking a contender's write token genuinely stops their writes. Note: the token-id index is eventually consistent — revoking within ~1s of creation can 404; retry after a short delay |

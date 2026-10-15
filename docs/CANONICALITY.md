@@ -127,7 +127,7 @@ offline bundle VERIFIED
 
 The competition crew is **one parent coordinator plus two scripted sub-agents on one contender fork**. They demonstrate concurrent process coordination and authority; they are not presented as evidence of LLM coding intelligence.
 
-Evidence: [`docs/LIVE_RUN_RESULTS.md`](LIVE_RUN_RESULTS.md) · [`docs/JOURNAL_2026-10-14_LIVE_RUN.md`](JOURNAL_2026-10-14_LIVE_RUN.md)
+Evidence: [`docs/LIVE_RUN_RESULTS.md`](LIVE_RUN_RESULTS.md)
 
 ## Live Cloudflare architecture
 
@@ -330,7 +330,7 @@ docs/                        architecture, live evidence, security, demo, resear
 - [`docs/MCP_AGENT_TOOLS.md`](MCP_AGENT_TOOLS.md) — MCP agent interface
 - [`docs/KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md) — current limits/non-claims
 - [`docs/SECURITY.md`](SECURITY.md) — threat model
-- [`keys/README.md`](keys/README.md) — pinned authority-key model
+- [`keys/README.md`](../keys/README.md) — pinned authority-key model
 
 ## License
 

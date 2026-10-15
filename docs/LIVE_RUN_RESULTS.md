@@ -94,4 +94,4 @@ against the Artifacts remote).
 
 ---
 
-*Full narrative: `docs/JOURNAL_2026-10-14_LIVE_RUN.md`. Run 4 is the recorded competition source run; the final narrated submission video is produced separately from that evidence.*
+*Run 4 is the recorded competition source run; the final narrated submission video is produced separately from that evidence.*

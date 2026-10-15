@@ -1,5 +1,5 @@
 /**
- * Hostile-audit authority regressions (docs/FINAL_HOSTILE_AUDIT.md).
+ * Hostile-audit authority regressions (audit record in git history, removed from main).
  * These call the real transitions. They do not stub the refusal.
  *
  * node --test test/final-authority-invariants.test.ts

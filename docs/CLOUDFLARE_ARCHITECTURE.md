@@ -56,7 +56,7 @@ promotion path is the canonical writer.
 Each run promoted onto `starter-repo` `main`; each baseline was the previous run's
 promotion. The reviewed/authorized SHA and canonical SHA matched in all four recorded
 successful runs. See `docs/LIVE_RUN_RESULTS.md` and
-`docs/JOURNAL_2026-10-14_LIVE_RUN.md`.
+`docs/LIVE_RUN_RESULTS.md`.
 
 ## Exact-state promotion
 

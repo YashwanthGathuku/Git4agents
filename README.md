@@ -131,7 +131,7 @@ The live deployment and the live end-to-end harness (`npm run live:e2e`) need a 
 | **Containers** | `madgrix-promotion` image: trusted `promote.sh` / `rebase.sh`, which write only the permitted SHA |
 | **Artifacts** | Git repositories: the canonical `starter-repo` and per-task contender forks with scoped tokens |
 
-More detail is in [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The previous long-form README, with CanonCap, the causal proof graph, conflict capsules and the full route list, is at [docs/README_FULL.md](docs/README_FULL.md).
+More detail is in [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). CanonCap, the causal proof graph, conflict capsules and the canonicality routes are described in [docs/CANONICALITY.md](docs/CANONICALITY.md).
 
 ## License
 

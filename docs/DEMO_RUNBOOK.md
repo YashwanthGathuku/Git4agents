@@ -2,7 +2,7 @@
 
 Status words for this integration: **TESTED ON FINAL SHA LOCALLY**, **TESTED ON CLOUDFLARE**, **NOT VERIFIED**.
 
-This runbook describes `competition/final`. The command log is `docs/FINAL_INTEGRATION_REPORT.md`. `npm run live:e2e` was not executed. The live command, the queue, and the deploy boundary are in `docs/CLOUDFLARE_LIVE_READINESS.md`. That note records the readiness session at `424b2b15425a65a25a230e949dea0f4d94192d9e`. It is not a Cloudflare run of this tree.
+This runbook describes `competition/final`. `npm run live:e2e` was not executed. The live command, the queue, and the deploy boundary are in `docs/CLOUDFLARE_LIVE_READINESS.md`. That note records the readiness session at `424b2b15425a65a25a230e949dea0f4d94192d9e`. It is not a Cloudflare run of this tree.
 
 ## What the local fixture does
 

@@ -74,4 +74,4 @@ canonical `starter-repo` `main`.
 - Secret values are not committed to the repository.
 
 For the exact recorded live evidence see `docs/LIVE_RUN_RESULTS.md` and
-`docs/JOURNAL_2026-10-14_LIVE_RUN.md`.
+`docs/LIVE_RUN_RESULTS.md`.

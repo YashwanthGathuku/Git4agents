@@ -164,7 +164,7 @@ Worker → Artifacts push → `cf.artifacts.repo.pushed` → queue `madgrix-even
 
 Run it with Node 24. This machine's Node 22.17.0 does not strip TypeScript in `node` without a flag. The script holds all three service tokens. Children do not inherit that environment.
 
-The roster sentences in this section describe the readiness session, not `competition/final`. On the final tree, MADGRIX checks the paired manifest itself, and `fleet validate` runs only when `MADGRIX_FLEET_BIN` is set. See `docs/DEMO_RUNBOOK.md` and `docs/FINAL_INTEGRATION_REPORT.md`.
+The roster sentences in this section describe the readiness session, not `competition/final`. On the final tree, MADGRIX checks the paired manifest itself, and `fleet validate` runs only when `MADGRIX_FLEET_BIN` is set. See `docs/DEMO_RUNBOOK.md` and the integration report (in git history).
 
 Unset `MADGRIX_AGENT_IDS` selects the fork crew. In this readiness session that child ran `fleet validate` and required `summary.agent_ids` in crew order. **LOCAL VERIFIED** on this machine at that session: `fleet 0.3.0` validate of `configs/git4agents-fork-crew.yaml` returned `is_valid: true` and `summary.total_agents: 3`, and the summary had no `agent_ids` field. That older binary fails only an explicit `MADGRIX_FLEET_BIN` cross-check on the final tree. The sibling contender swarm still needs `summary.agent_ids` or `MADGRIX_AGENT_IDS`.
 
