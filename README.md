@@ -10,12 +10,15 @@ Every promotion leaves a signed bundle you can verify offline, so "it passed rev
 
 **Live:** https://madgrix.ygathuku96.workers.dev · **◆ Trust board:** https://madgrix.ygathuku96.workers.dev/board · **▶ Replay of a verified live run:** https://madgrix.ygathuku96.workers.dev/replay · **Attack scenarios (simulated):** [/replay?scenario=sim](https://madgrix.ygathuku96.workers.dev/replay?scenario=sim) · **Demo video:** _link to be added_ (script: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md))
 
-[![Trust board: live cheater run, cheater-cal quarantined at the gates, honest-ana promoted and VERIFIED](docs/assets/board-cheater.gif)](https://madgrix.ygathuku96.workers.dev/board?scenario=cheater&autoplay=1)
+[![Trust board mall: live cheater run, cheater-cal stopped by security and taken to the quarantine room, false-done-fay turned back at checkout, honest-ana drives off with the promoted SHA](docs/assets/board-cheater.gif)](https://madgrix.ygathuku96.workers.dev/board?scenario=cheater&autoplay=1)
 
-[/board](https://madgrix.ygathuku96.workers.dev/board): three recorded live runs on a treemap of ky. Crew of 13 · cheater quarantined · 3,000-agent claims. All REAL, numbers from the ledgers and logs (`scripts/build-board-data.py`).
+[/board](https://madgrix.ygathuku96.workers.dev/board): each repo is drawn as an illustrated shopping mall. Agents walk in through the fork & enroll desk, visit shops (the repo's directories, signs named after real module paths), pick up shelf items (the files they claimed; two shoppers at one shelf = overlap flagged), then queue at checkout where the gates run (blind eval, hidden tests, provenance). Honest shoppers walk out with bags and drive off with the promoted SHA; the cheater is stopped by security and taken to the quarantine room with its reason; the false-done shopper is turned back at checkout. The ledger receipt panel prints the real ledger events. Click a shop or a shopper for recorded details. Params: `?scenario=crew|cheater|scale&autoplay=1&speed=2&loop=1`.
+
+Three recorded live runs: crew of 13 on ky (12 overlaps, promoted `d5bcf018194b`) · cheater (`cheater-cal` quarantined, ledger #19 `eval_file_modification`; `false-done-fay` failed hidden tests; `honest-ana` `f27946233a53` promoted and VERIFIED; tampered bundle NOT VERIFIED) · 3,000-agent claims (149/149 overlaps flagged). Agents, files, gates, ledger entries and SHAs are REAL (`scripts/build-board-data.py`); the floor plan, walking and the 300-figure crowd are a visualization.
 
 | ![board crew](docs/assets/board-crew.png) | ![board scale](docs/assets/board-scale.png) |
 |---|---|
+| ![board cheater](docs/assets/board-cheater.png) | ![board crew promoted](docs/assets/board-crew-done.png) |
 
 ![Live cheater run: cheater-cal quarantined (eval_file_modification), TheUstad FINAL FALSIFIED, tampered bundle NOT VERIFIED](docs/assets/live-cheater-quarantine.gif)
 

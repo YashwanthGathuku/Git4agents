@@ -20,6 +20,18 @@ describe("GET /board", () => {
 		assert.doesNotMatch(html, /art_v2|Bearer /);
 	});
 
+	it("draws the mall: shops, checkout gates, quarantine room, parking, receipt", async () => {
+		const h = await makeHarness();
+		const html = await (await worker.fetch(new Request("https://madgrix.test/board"), h.env as any)).text();
+		for (const s of ["the repo mall", "CHECKOUT", "Blind eval", "Hidden tests", "Provenance", "QUARANTINE ROOM", "PARKING", "LEDGER RECEIPT", "visualization"]) assert.ok(html.includes(s), s);
+		assert.match(html, /scenario/);
+		assert.match(html, /autoplay/);
+		assert.match(html, /loop/);
+		assert.match(html, /test\/base-url\.ts/);
+		assert.match(html, /<svg/);
+		assert.doesNotMatch(html, /<img[^>]+src=["']https?:/);
+	});
+
 	it("is linked from the landing page", async () => {
 		const h = await makeHarness();
 		const home = await (await worker.fetch(new Request("https://madgrix.test/"), h.env as any)).text();

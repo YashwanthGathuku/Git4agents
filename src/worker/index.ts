@@ -1785,7 +1785,7 @@ function landingPage(env: Env): Response {
 <h1>Git4agents</h1>
 <p>A governed promotion protocol for autonomous software agents, running on Cloudflare Workers, Durable Objects, Queues, Workflows, Containers and Artifacts. This Worker is <code>madgrix</code>.</p>
 <p>Agents compete on one frozen task in isolated Artifact repositories. Evidence comes from a separate evaluation domain, blind verifiers sign reports, and a single-use exact-state permit lets only the reviewed commit reach canonical history. Every promotion ships a signed bundle you can verify offline.</p>
-<p><a href="/board"><b>◆ Open the trust board</b></a>: three recorded live runs (13-agent crew, cheater quarantined, 3,000-agent claims) on a treemap of ky.</p>
+<p><a href="/board"><b>◆ Open the trust board</b></a>: three recorded live runs (13-agent crew, cheater quarantined, 3,000-agent claims) drawn as an illustrated repo mall.</p>
 <p><a href="/replay"><b>▶ Watch the replay</b></a>: the recorded live run, step by step, plus the attack scenarios.</p>
 <h2>Open without a token</h2>
 <ul>
