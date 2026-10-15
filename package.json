@@ -19,6 +19,8 @@
     "verify": "node src/cli/verify.ts",
     "bench": "node src/lib/benchmark.ts",
     "attack:lab": "node scripts/attack-lab.ts",
+    "fleet:10k": "node scripts/scale-10k.ts",
+    "fleet:waves": "node scripts/run-fleet-waves.mjs",
     "test": "node --test \"test/**/*.test.ts\"",
     "contenders": "node scripts/run-contenders.mjs",
     "fork-crew": "node scripts/run-fork-crew.mjs",
