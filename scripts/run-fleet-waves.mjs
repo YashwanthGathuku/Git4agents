@@ -32,6 +32,7 @@ import { DEFAULT_ACTIVE_AGENT_WINDOW, planAgentWaves } from "../src/lib/fleet-sc
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+/** @param {string | undefined} raw @param {number} fallback */
 function parsePositiveInt(raw, fallback) {
 	if (raw === undefined || raw === "") return fallback;
 	const n = Number(raw);
@@ -41,28 +42,35 @@ function parsePositiveInt(raw, fallback) {
 	return n;
 }
 
+/** @returns {Promise<string[]>} */
 async function loadRoster() {
 	const file = process.env.MADGRIX_AGENT_IDS_FILE;
 	if (!file) return loadContenderIds();
 	const raw = await readFile(file, "utf8");
 	try {
 		const parsed = JSON.parse(raw);
-		if (Array.isArray(parsed)) return parsed;
+		if (Array.isArray(parsed) && parsed.every((id) => typeof id === "string")) return parsed;
 	} catch {
 		// Newline format below.
 	}
 	return raw.split(/\r?\n/).map((id) => id.trim()).filter(Boolean);
 }
 
+/**
+ * @param {string[]} agentIds
+ * @param {Record<string, string>} secrets
+ * @param {number} index
+ * @returns {Promise<any>}
+ */
 async function runWave(agentIds, secrets, index) {
 	const resultPath = path.join(os.tmpdir(), `madgrix-fleet-wave-${process.pid}-${index}.json`);
 	const selectedSecrets = Object.fromEntries(agentIds.map((id) => [id, secrets[id]]));
-	const env = {
+	const env = /** @type {NodeJS.ProcessEnv} */ ({
 		...process.env,
 		MADGRIX_AGENT_IDS: agentIds.join(","),
 		MADGRIX_AGENT_SECRETS: JSON.stringify(selectedSecrets),
 		MADGRIX_RESULT_PATH: resultPath,
-	};
+	});
 	delete env.MADGRIX_AGENT_IDS_FILE;
 	delete env.MADGRIX_AGENT_SECRETS_FILE;
 
@@ -75,7 +83,7 @@ async function runWave(agentIds, secrets, index) {
 			});
 			child.on("error", reject);
 			child.on("exit", (code, signal) => {
-				if (code === 0) resolve();
+				if (code === 0) resolve(undefined);
 				else reject(new Error(`fleet wave ${index + 1} exited ${code ?? signal}`));
 			});
 		});
@@ -96,10 +104,11 @@ if (!secretsPath) {
 const roster = await loadRoster();
 const activeWindow = parsePositiveInt(process.env.MADGRIX_ACTIVE_AGENT_WINDOW, DEFAULT_ACTIVE_AGENT_WINDOW);
 const waves = planAgentWaves(roster, activeWindow);
-const secrets = JSON.parse(await readFile(secretsPath, "utf8"));
-if (!secrets || typeof secrets !== "object" || Array.isArray(secrets)) {
+const parsedSecrets = JSON.parse(await readFile(secretsPath, "utf8"));
+if (!parsedSecrets || typeof parsedSecrets !== "object" || Array.isArray(parsedSecrets)) {
 	throw new Error("MADGRIX_AGENT_SECRETS_FILE must contain a JSON object");
 }
+const secrets = /** @type {Record<string, string>} */ (parsedSecrets);
 for (const id of roster) {
 	if (typeof secrets[id] !== "string" || !/^[0-9a-f]{64}$/.test(secrets[id])) {
 		throw new Error(`missing/invalid enrolled secret for ${id}`);
@@ -110,6 +119,7 @@ console.error(
 	`[Git4agents] logical fleet ${roster.length}; ${waves.length} waves; at most ${activeWindow} active contender processes`,
 );
 const started = Date.now();
+/** @type {any[]} */
 const results = [];
 for (const wave of waves) {
 	console.error(`[Git4agents] wave ${wave.index + 1}/${waves.length}: ${wave.agent_ids.length} agents`);
