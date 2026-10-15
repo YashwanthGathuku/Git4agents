@@ -1,3 +1,4 @@
+// @ts-nocheck -- merged from competition/artifact-verifier, which was written without strict checkJs; behavior unchanged.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';

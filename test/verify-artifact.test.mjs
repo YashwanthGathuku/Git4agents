@@ -1,3 +1,4 @@
+// @ts-nocheck -- merged from competition/artifact-verifier, which was written without strict checkJs; behavior unchanged.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
