@@ -103,3 +103,8 @@ export async function fetch(request: Request, env: WorkerEnv): Promise<Response>
 		: await core.fetch(request, env);
 	return enhanceGraph(request, env, response);
 }
+
+// The deploy API needs the queue consumer on the module's handler object;
+// `export *` does not carry index.ts's default export, so name it here.
+export const queue = core.queue;
+export default { fetch, queue };
