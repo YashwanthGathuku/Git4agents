@@ -6,8 +6,6 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://madgrix.ygathuku96.workers.dev)
 
-> **Git decides ancestry. MADGRIX decides canonicality.**
-
 Git was designed around human developers, social review, branch permissions, and relatively small numbers of concurrent actors. Autonomous coding agents change the operating assumptions: many agents can work at once, claim completion incorrectly, modify evaluation material, race against stale state, and produce more evidence than humans can manually interpret.
 
 **MADGRIX / Git4agents keeps Git as the content-addressed history layer, but adds an agent-native governance and canonicalization protocol around it.** Agents may create contender state; they never receive canonical write authority. Only the exact candidate that passes independent gates, blind verification, the verdict seam, and an exact-state single-use permit may become canonical. Every successful promotion produces a signed bundle that can be verified offline against a pinned key.
@@ -82,27 +80,26 @@ Deep dive: [live run results](docs/LIVE_RUN_RESULTS.md) · [scale](docs/SCALE.md
 
 ---
 
-## From human Git to Git for agents
+## From Git for humans to Git for agents
 
-Traditional Git remains excellent at immutable snapshots, ancestry, branching, merging, and distributed transport. GitHub adds collaboration, pull requests, permissions, CI, and social review. Those primitives remain useful, but several assumptions change when autonomous agents become first-class software actors.
+> **Git decides ancestry. Git4agents decides canonicality.**
 
-| Human-era model | Agent-era problem | MADGRIX primitive |
+Git and GitHub assume a few humans who take turns: work goes on branches, a person reviews the pull request, branch permissions say who may merge, trust is social, and the merge itself decides what ships. Git stays the content-addressed history layer in Git4agents. What breaks with agent fleets is everything around it:
+
+| Git / GitHub assumes | What breaks with agent fleets | What Git4agents adds (code) |
 |---|---|---|
-| A small number of developers coordinate through branches and PRs | Hundreds or thousands of agents can act concurrently | **WorkClaims** + shared work graph expose intent, scope, ownership, and interactions before code lands |
-| Branch permissions answer **who may merge** | An allowed actor can still produce wrong, stale, or unevaluated state | **CanonCap / exact-state permit** binds authority to one exact task, baseline, candidate, evidence, policy, and destination HEAD |
-| Human reviewers infer intent and trust from discussion | Agents can falsely claim `done` or produce plausible but incorrect summaries | **Frozen task + independent evaluation + TheUstad baseline gate** separate claims from evidence |
-| CI usually runs after branch/PR state exists | An agent may modify tests/evaluation material to make itself look correct | **Independent evaluation domain** + `no_eval_tampering` + mechanical quarantine |
-| Merge conflicts are discovered at line/merge time | Concurrent agents can overlap semantically before Git sees a line conflict | **Semantic clearance / conflict reports** flag path, symbol, contract, state, and impact interactions |
-| Merge permission is reusable actor authority | Agent-era promotion needs one-shot, state-specific authority | **Single-use exact-state permit**; destination HEAD movement expires old authority |
-| Git history proves what changed | It does not prove why a state earned the right to ship | **Hash-chained ledger + causal proof graph + signed DSSE bundle** |
-| Human review is the final trust boundary | Human review cannot scale to every high-frequency agent action | **Machine-enforced non-compensatory gates**, with humans reserved for ambiguity/escalation rather than integrity overrides |
+| Humans take turns; overlaps surface at merge time | Hundreds of agents edit at once; overlaps land before anyone looks | **WorkClaims** declare paths, symbols and contracts up front; overlaps are flagged at claim time (`src/lib/claims.ts`, `src/lib/work-graph.ts`) |
+| A person reviews the PR | No one can read every agent diff; agents say "done" when they are not | **Independent evaluation** + **blind commit-then-reveal verifiers** (`src/lib/evaluation.ts`, `src/lib/verifiers.ts`) and the **TheUstad** baseline check (`scripts/lib/fork-crew.mjs`) |
+| An admin can override a failed check | A single waiver lets bad state ship | **Non-compensatory mandatory gates**; no override path exists (`src/lib/eval-gates.ts`, `src/lib/verdict-seam.ts`) |
+| CI trusts the tests in the branch | An agent can edit the tests to pass | **Mechanical quarantine** on eval-file changes (`no_eval_tampering`, ledger `contender_quarantined`) |
+| Branch permission = reusable merge right | An allowed actor can still push stale or unreviewed state | **Single-use exact-state permit** bound to task, baseline, candidate SHA, evidence, policy and destination HEAD (`src/lib/permit.ts`, `src/lib/canoncap.ts`) |
+| The merge is the record | History shows what changed, not why it was allowed | **Hash-chained ledger** + **DSSE/in-toto bundle** signed by the authority, verifiable offline with a pinned key (`src/lib/ledger.ts`, `src/lib/attestation.ts`, `src/cli/verify.ts`) |
+| Each reviewer re-reads the repo | Agents re-read whole trees on every pass | **Module memory**: per-module cards held by `ModuleAgent` Durable Objects (`src/lib/module-memory.ts`, `src/do/ModuleAgent.ts`) |
 
 ```text
-Human Git:     identity / branch permission -> review -> merge
-Git4agents:    intent -> bounded work -> evidence -> verdict -> exact-state authority -> canonicalize -> prove
+Human Git:   identity / branch permission -> review -> merge
+Git4agents:  claim -> isolated fork -> evidence -> blind verdict -> exact-state permit -> promote -> signed proof
 ```
-
-**Git records what changed. MADGRIX records why work began, what authority existed, what was checked, why a state was authorized, and whether the exact reviewed state is the exact state that shipped.**
 
 ---
 
@@ -113,8 +110,8 @@ Git4agents:    intent -> bounded work -> evidence -> verdict -> exact-state auth
 | **Frozen task** | Pins intent, baseline commit, policy version, and behavior contract before work begins |
 | **WorkClaim** | Declares agent intent, baseline, paths, symbols, contracts, interfaces, schema changes, expected tests, and lease |
 | **Semantic clearance** | Projects stored conflict reports as `CLEAR`, `CAUTION`, `HOLD`, or `REVIEW`; advisory only, never a permission grant |
-| **Contender / fork crew** | Isolates agent-produced state from canonical Git; fork crews let many sub-agents work on one governed contender fork |
-| **Composition state** | `COMPOSED`, `CONFLICTED`, and `RESOLVED` distinguish a promotable candidate from unresolved multi-agent work |
+| **Contender / fork crew** | Isolates agent-produced state from canonical Git; fork crews let many sub-agents work on one governed contender fork (crew orchestration runs in the local runner, `scripts/run-fork-crew.mjs`) |
+| **Composition state** | Per-file three-way merge in the crew runner (`scripts/lib/fork-crew.mjs`), recorded by the authority (`src/lib/composition-authority.ts`): `COMPOSED`, `CONFLICTED`, and `RESOLVED` distinguish a promotable candidate from unresolved multi-agent work |
 | **Independent evaluation** | Checks immutable candidate state for exact baseline, scope, tampering, hidden oracle, regressions, static analysis, security, semantics, and provenance |
 | **Blind verification** | Verifiers commit references before candidate exposure, then reveal once and sign reports |
 | **TheUstad gate** | In the fork-crew path, checks the parent is clean and still on the frozen baseline before composition; it is not the semantic judge |
@@ -129,21 +126,20 @@ More: [CANONICALITY.md](docs/CANONICALITY.md) · [CANONICALITY_PRIMITIVES.md](do
 
 ---
 
-## Cloudflare is the runtime, not a logo on top
+## Built on Cloudflare
 
-MADGRIX uses Cloudflare primitives as distinct trust and execution roles rather than putting the whole system in one service.
+Git4agents runs as one Worker, `madgrix`, configured in [`cloudflare.config.ts`](cloudflare.config.ts). Each product has a separate trust or execution role:
 
-| Cloudflare primitive | MADGRIX role |
-|---|---|
-| **Workers** | Public HTTP control plane, REST routes, `/mcp`, `/board` (+ live mode, `/board/new`), graph views, Queue consumer, auth boundary |
-| **Durable Objects — `TaskAuthority`** | Per-task authoritative state: frozen task, WorkClaims, conflict reports, evaluations, ledger, verdicts, permits, and promotion records |
-| **Durable Objects — `PromotionContainer`** | Hosts/coordinates the trusted promotion runtime path |
-| **Durable Objects — `ModuleAgent`** | Deployed per-module memory owner; stores deterministic module cards and wake metadata |
-| **Artifacts** | Real Git substrate: baseline/canonical repository plus contender forks and scoped Git credentials |
-| **Queues — `madgrix-events`** | Receives real `cf.artifacts.repo.pushed` events and feeds them into TaskAuthority with deduplication |
-| **Workflows — `madgrix-promotion`** | One durable promotion instance per permit; instance id is the permit id |
-| **Containers — `madgrix-promotion`** | Trusted `promote.sh` / `rebase.sh` writer; only this path can write canonical Git state |
-| **Worker secrets** | Control, agent, and evaluation service tokens plus authority signing key; secret values are not stored in the repository |
+| Product | How Git4agents uses it | Code |
+|---|---|---|
+| **Workers** | `madgrix` entrypoint: REST control plane with per-domain bearer auth (control / agent / evaluation), `/mcp` (7 agent-safe tools), `/board` + live mode + `/board/new`, `/why` / CanonCap routes, landing page, Queue consumer | `src/worker/entrypoint.ts`, `src/worker/index.ts`, `src/worker/mcp.ts`, `src/worker/board-page.ts` |
+| **Durable Objects: `TaskAuthority`** (SQLite) | One per task, single writer: frozen task, WorkClaims, conflict reports, contenders, evaluations, verifier commitments/reveals, verdicts, permits, hash-chained ledger | `src/do/TaskAuthority.ts`, `src/lib/task-state.ts` |
+| **Durable Objects: `ModuleAgent`** (SQLite) | Per-module memory card and wake metadata; holds nothing in memory between requests | `src/do/ModuleAgent.ts`, `src/lib/module-memory.ts` |
+| **Artifacts** (namespace `default`) | Git substrate: `import()` of public repos (`/board/new`), one fork per contender, short-lived write tokens scoped to the fork only, canonical repo written only by the promotion path | `src/lib/artifacts-port.ts`, `src/worker/board-new.ts`, `src/worker/index.ts` |
+| **Queues: `madgrix-events`** | Receives Artifacts push events and reconciles them into the task authority with deduplication (`queue_event_reconciled` on the ledger) | `src/lib/artifact-events.ts`, `src/lib/queue-reconcile.ts`, `queue()` in `src/worker/index.ts` |
+| **Workflows: `madgrix-promotion`** | One durable promotion instance per permit (instance id = permit id) | `PromotionWorkflow` in `src/worker/index.ts` |
+| **Containers: `madgrix-promotion`** (via `PromotionContainer` DO) | Trusted Git runtime running `promote.sh` / `rebase.sh` / `copy-baseline.sh`; fast-forwards canonical only if destination HEAD still matches the permit. Evaluation is **not** run here: the evaluation domain is a separate service (`scripts/evaluate-candidate.ts`) posting evidence with its own token | `container/`, `src/do/PromotionContainer.ts` |
+| **Worker secrets** | Control, agent and evaluation service tokens, the authority signing key and the `/board/new` demo key; never in the repo | `cloudflare.config.ts` |
 
 ### Live path
 
