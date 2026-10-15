@@ -3,7 +3,7 @@
 **The trust layer for agent-written code.**
 
 [![tests](https://img.shields.io/badge/tests-446%20passing-2ea44f)](test)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://madgrix.ygathuku96.workers.dev)
 
 Git was designed around human developers, social review, branch permissions, and relatively small numbers of concurrent actors. Autonomous coding agents change the operating assumptions: many agents can work at once, claim completion incorrectly, modify evaluation material, race against stale state, and produce more evidence than humans can manually interpret.
@@ -452,4 +452,4 @@ Full list: [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
 
 ## License
 
-[MIT](LICENSE) © 2026 Yashwanth Gathuku
+[Apache License 2.0](LICENSE) © 2026 Yashwanth Gathuku. See [NOTICE](NOTICE) for third-party notices (TheUstad, MIT).

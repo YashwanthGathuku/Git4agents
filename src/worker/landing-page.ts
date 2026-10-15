@@ -120,7 +120,7 @@ ${demoLinks}
 </ul><p style="font-size:13.5px;color:var(--dim);margin:12px 0 0">Every other route needs a service token. See the API table in the <a href="${REPO}">README</a>. Runs on Cloudflare Workers, Durable Objects, Queues, Workflows, Containers and Artifacts (Worker <code>madgrix</code>).</p></div></div>
 <div class="honest"><b>Honest limits.</b> The mall's building, walking and crowd are a visualization; agents, files, gates, ledger lines and SHAs are real. The Worker does not run agents itself: agent work comes from the local runners. The 3,000-agent run is a claim-registration load test on one task with synthetic paths, not 3,000 coding agents. Attestation here is a platform-level permit check, not full in-toto/Sigstore.</div>
 </div></section>
-<footer><div class="wrap ft"><span><b>Git4agents</b> · MIT license · <a href="${REPO}">${REPO.replace("https://", "")}</a></span><span><a href="/board">board</a> · <a href="/board/new">bring a repo</a> · <a href="/health">health</a></span></div></footer>
+<footer><div class="wrap ft"><span><b>Git4agents</b> · Apache-2.0 license · <a href="${REPO}">${REPO.replace("https://", "")}</a></span><span><a href="/board">board</a> · <a href="/board/new">bring a repo</a> · <a href="/health">health</a></span></div></footer>
 </body></html>`;
 }
 

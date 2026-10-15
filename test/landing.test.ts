@@ -36,7 +36,7 @@ describe("landing page and retired /replay", () => {
 		const res = await worker.fetch(new Request("https://madgrix.test/"), h.env as any);
 		assert.match(res.headers.get("content-security-policy") ?? "", /default-src 'none'/);
 		const html = await res.text();
-		for (const s of ['href="/board"', 'href="/board/new"', "3,000", "149 / 149", "d5bcf018194b", "f27946233a53", "eval_file_modification", "MIT license", "Honest limits"]) assert.ok(html.includes(s), s);
+		for (const s of ['href="/board"', 'href="/board/new"', "3,000", "149 / 149", "d5bcf018194b", "f27946233a53", "eval_file_modification", "Apache-2.0 license", "Honest limits"]) assert.ok(html.includes(s), s);
 		assert.doesNotMatch(html, /<script/);
 		assert.doesNotMatch(html, /\/replay/);
 	});
