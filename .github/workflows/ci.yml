@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - codex/**
+      - grok/final-live
   pull_request:
 
 permissions:
@@ -33,6 +34,7 @@ jobs:
       - name: Validate live-run scripts
         run: |
           node --check scripts/run-contenders.mjs
+          node --check scripts/run-fleet-waves.mjs
           node --check scripts/evaluate-candidate.ts
           node --check scripts/live-e2e.ts
           node --check scripts/adapters/claude-code-tool-log.mjs
@@ -50,3 +52,5 @@ jobs:
         run: npm run bench
       - name: Canonicality attack lab
         run: npm run attack:lab
+      - name: 10,000-agent logical fleet scale proof
+        run: npm run fleet:10k
