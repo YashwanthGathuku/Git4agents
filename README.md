@@ -16,7 +16,11 @@ Every promotion leaves a signed bundle you can verify offline, so "it passed rev
 
 **Live mode** (`/board?live=1`, also the default with no `scenario`): polls the read-only, public-safe `GET /tasks/:id/board-state` every 4 s (whitelisted fields only: agent ids, claim paths, contender status, gate booleans, verdict winner, ledger kinds/hashes; no tokens or token ids) and redraws the mall as forks, claims, gate results and ledger events change. There is no public task index, so it watches the recorded task ids plus any you add with `&task=<id>,<id>`.
 
-![board live mode](docs/assets/board-live.png)
+**Open your own repo in the mall** ([/board/new](https://madgrix.ygathuku96.workers.dev/board/new)): paste a public GitHub URL, an instruction and (optionally) the paths to claim. With the demo access key, the Worker imports the repo into Artifacts (binding `import()`), freezes a real task with your instruction (`handleCreateTask`), registers one claim per agent from your instruction and forks one Artifacts repo per agent (`handleClaim` + `handleCreateContender`, the same first steps as `scripts/run-contenders.mjs`), then redirects to the live mall. It does **not** run agents; commits and gate runs come from the agent runners, and the mall shows only what the authority records. Agent secrets and fork tokens are discarded server-side. Protected by a demo key (Worker secret), a per-IP limit (1 import / 10 min, best effort) and a 20 MB repo cap. Verified end to end: `sindresorhus/is-plain-obj` (MIT) → `task_f0936a321f6c5844dd2bc2af`, 2 claims, 2 forks, 8 ledger entries.
+
+| ![board new](docs/assets/board-new.png) | ![board live mode](docs/assets/board-live.png) |
+|---|---|
+
 
 Three recorded live runs: crew of 13 on ky (12 overlaps, promoted `d5bcf018194b`) · cheater (`cheater-cal` quarantined, ledger #19 `eval_file_modification`; `false-done-fay` failed hidden tests; `honest-ana` `f27946233a53` promoted and VERIFIED; tampered bundle NOT VERIFIED) · 3,000-agent claims (149/149 overlaps flagged). Agents, files, gates, ledger entries and SHAs are REAL (`scripts/build-board-data.py`); the floor plan, walking and the 300-figure crowd are a visualization.
 

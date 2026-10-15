@@ -73,3 +73,28 @@ describe("GET /tasks/:id/board-state", () => {
 		assert.match(await res.text(), /board-state/);
 	});
 });
+
+describe("/board/new", () => {
+	it("serves the import form", async () => {
+		const h = await makeHarness();
+		const res = await worker.fetch(new Request("https://madgrix.test/board/new"), h.env as any);
+		assert.equal(res.status, 200);
+		const html = await res.text();
+		assert.match(html, /Demo access key/);
+		assert.match(html, /do <b>not<\/b> start working/);
+	});
+	it("refuses without the demo key and never imports", async () => {
+		const h = await makeHarness();
+		const env = { ...(h.env as any), BOARD_DEMO_KEY: "right-key" };
+		const body = new URLSearchParams({ repo: "https://github.com/a/b", instruction: "x", key: "wrong", agents: "1" });
+		const res = await worker.fetch(new Request("https://madgrix.test/board/new", { method: "POST", body }), env);
+		assert.equal(res.status, 400);
+		assert.match(await res.text(), /Wrong demo access key/);
+	});
+	it("is disabled when no key is configured", async () => {
+		const h = await makeHarness();
+		const body = new URLSearchParams({ repo: "https://github.com/a/b", instruction: "x", key: "k" });
+		const res = await worker.fetch(new Request("https://madgrix.test/board/new", { method: "POST", body }), { ...(h.env as any), BOARD_DEMO_KEY: undefined });
+		assert.match(await res.text(), /disabled/);
+	});
+});

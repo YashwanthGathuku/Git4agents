@@ -50,6 +50,7 @@
 
 import { renderReplayPage } from "./replay-page.ts";
 import { renderBoardPage } from "./board-page.ts";
+import { renderNewPage, handleNewBoard } from "./board-new.ts";
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 
@@ -1847,6 +1848,11 @@ async function route(request: Request, env: Env): Promise<Response> {
 	if (request.method === "GET" && parts.length === 0) return landingPage(env);
 	if (request.method === "GET" && parts.length === 1 && parts[0] === "health") {
 		return json({ ok: true, service: "madgrix", protocol: "git4agents" }, 200);
+	}
+	// GET/POST /board/new — import a public repo, freeze a task, fork for agents (demo key + rate limit).
+	if (parts.length === 2 && parts[0] === "board" && parts[1] === "new") {
+		if (request.method === "GET") return renderNewPage();
+		if (request.method === "POST") return handleNewBoard(env, request, { createTask: handleCreateTask, createContender: handleCreateContender, claim: handleClaim });
 	}
 	// GET /board — self-contained trust board over recorded live runs.
 	if (request.method === "GET" && parts.length === 1 && parts[0] === "board") {
