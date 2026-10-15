@@ -1,337 +1,116 @@
-# Git4agents / MADGRIX
+# Git4agents
 
-> **Git decides ancestry. MADGRIX decides canonicality.**
+**The trust layer for agent-written code.**
 
-MADGRIX is a governed Git canonicalization protocol for autonomous software agents, built on Cloudflare Workers + Artifacts. Agents can create many candidate states concurrently; **only one exact software state that has earned evidence-bound authority may become canonical**.
+[![tests](https://img.shields.io/badge/tests-428%20passing-2ea44f)](test) [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://madgrix.ygathuku96.workers.dev)
 
-```text
-INTENT → WorkClaims → contender work → independent evidence
-       → blind verification → VERDICT SEAM
-       → CanonCap → exact-state promotion
-       → signed, offline-verifiable history
-```
+Agents can now write code faster than anyone can review it. Branch permissions say *who* may merge, not *which exact state* earned the right to ship.
+Git4agents lets any number of agents work in parallel, but only one exact commit, checked by gates nobody can override, can become canonical.
+Every promotion leaves a signed bundle you can verify offline, so "it passed review" is checkable instead of a claim.
 
-Git records **what changed**. MADGRIX records **why work began, what authority existed, what was checked, why a state was authorized, and whether the exact reviewed state is the state that shipped**.
+**Live:** https://madgrix.ygathuku96.workers.dev · **▶ Replay of a verified live run:** https://madgrix.ygathuku96.workers.dev/replay · **Demo video:** *coming soon* (script: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md)) · **Attack scenarios:** [/replay?scenario=sim](https://madgrix.ygathuku96.workers.dev/replay?scenario=sim)
 
-## The agent-era primitive: canonicality
+---
 
-Traditional Git authorization is actor-centric: *Alice may merge to main.* Autonomous agents need a narrower boundary.
+## 60-second tour
 
-### CanonCap — Canonicalization Capability
-
-**Canonicality is a capability, not a branch permission.**
-
-MADGRIX already enforced exact-state, single-use promotion permits. `madgrix-canoncap/v1` makes that authority explicit and content-addressed for agents, tooling, Mission Control and proof:
-
-```text
-this task
-+ this baseline
-+ this exact candidate SHA/tree
-+ this evidence bundle
-+ this policy
-+ this destination repository
-+ this exact destination HEAD
-+ single use
-────────────────────────────────────
-= one right to canonicalize this state
-```
-
-If the candidate changes, its tree changes, evidence changes, policy changes, destination changes, the destination HEAD moves, or the capability is consumed, the old authority cannot authorize the write. A rebase creates a new SHA and therefore requires new evaluation and new authority.
-
-The existing permit remains the enforcement object in `TaskAuthority`; CanonCap is the secret-free public descriptor of that already-enforced authority.
-
-### Causal Proof Graph
-
-Git answers: **what came before this commit?**
-
-MADGRIX can additionally answer: **why did this exact SHA have the right to become canonical?**
-
-```text
-task intent
-   ↓
-WorkClaims
-   ↓
-composition
-   ↓
-independent evaluation
-   ↓
-verdict
-   ↓
-CanonCap
-   ↓
-signed promotion proof
-   ↓
-canonical SHA
-```
-
-Every node is content-addressed and the projection has a deterministic `causal_root`. It is explanatory/proof state only; it cannot grant authority or promote code.
-
-### Conflict Capsule
-
-A `CONFLICTED` composition is **not software that may ship**. MADGRIX projects that state as `madgrix-conflict-capsule/v1`: baseline, contributing SHAs, conflicting paths, agent/role/SHA metadata and source-excerpt digests, plus the mandatory rule that resolution creates a **new candidate SHA that must be re-evaluated**.
-
-```text
-CONFLICTED
-  → candidate_sha = null
-  → old authority invalid
-  → new resolved SHA required
-  → re-evaluation required
-```
-
-Raw conflict excerpts are not exported by the public capsule.
-
-### Attack Lab
-
-The protocol's security advantage is deliberately demoable instead of hidden in prose:
-
-```bash
-npm run attack:lab
-```
-
-Expected ending:
-
-```text
-26/26 adversarial trials passed
-unauthorized canonical promotions: 0
-ATTACK_LAB_VERIFIED
-```
-
-This is the existing local adversarial protocol harness made judge-readable; it is **not** presented as live Cloudflare fault injection.
-
-Specs and the precise non-novelty boundary: [`docs/CANONICALITY_PRIMITIVES.md`](docs/CANONICALITY_PRIMITIVES.md) · [`docs/CANONICALITY_PRIOR_ART.md`](docs/CANONICALITY_PRIOR_ART.md)
-
-## Live competition proof
-
-MADGRIX has completed **four recorded end-to-end runs on real Cloudflare infrastructure**.
-
-| Run | Task | Baseline | Reviewed / promoted SHA | Result |
-|---|---|---|---|---|
-| 1 | `task_0090714a…` | `7d6cb08` | `3b71d3a` | TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
-| 2 | `task_6cdb2087…` | `3b71d3a` | `fc9c1e7` | TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
-| 3 | `task_735cca4a…` | `fc9c1e7` | `b3ee4c86` | TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
-| 4 | `task_79b1f9d6…` | `b3ee4c86` | `d55332b5` | `MADGRIX_LIVE_E2E_OK`, TheUstad `FINAL VERIFIED`, bundle `VERIFIED` |
-
-Each run promoted onto the real `starter-repo` Artifacts `main`; each baseline was the previous run's promoted state. **The reviewed/authorized SHA and shipped SHA were identical in all four recorded successful runs.**
-
-Run 4 is the competition source run:
-
-```text
-task       task_79b1f9d610e94d8e95daa503
-baseline   b3ee4c862dcc6996678dc25c1de5c49b060fa9d4
-reviewed   d55332b544992a2e033ca03fa54972c5283eef73
-promoted   d55332b544992a2e033ca03fa54972c5283eef73
-TheUstad   FINAL VERIFIED
-orchestrator MADGRIX_LIVE_E2E_OK
-offline bundle VERIFIED
-```
-
-The competition crew is **one parent coordinator plus two scripted sub-agents on one contender fork**. They demonstrate concurrent process coordination and authority; they are not presented as evidence of LLM coding intelligence.
-
-Evidence: [`docs/LIVE_RUN_RESULTS.md`](docs/LIVE_RUN_RESULTS.md) · [`docs/JOURNAL_2026-10-14_LIVE_RUN.md`](docs/JOURNAL_2026-10-14_LIVE_RUN.md)
-
-## Live Cloudflare architecture
+A parent agent forks once. Sub-agents claim paths and commit on that fork. The push travels through a Cloudflare Queue to the task's Durable Object. A separate evaluation domain checks the exact candidate, blind verifiers vote, and only then does a single-use permit let that exact SHA reach canonical history.
 
 ```mermaid
 flowchart LR
-    A[Parent + 2 sub-agents] --> W[MADGRIX Worker / MCP]
-    W --> R[Cloudflare Artifacts<br/>baseline + contender fork]
-    R -->|cf.artifacts.repo.pushed| Q[madgrix-events Queue]
-    Q --> T[TaskAuthority Durable Object]
-    T --> E[Independent evaluation<br/>+ blind signed reports]
-    E --> V[Verdict Seam]
-    V --> K[CanonCap / exact-state permit]
-    K --> F[PromotionWorkflow]
-    F --> P[PromotionContainer / Container]
-    P --> C[Canonical Artifacts repo<br/>exact reviewed SHA]
-    C --> B[Signed promotion.bundle]
-    B --> O[Offline verifier<br/>pinned authority key]
-    O --> X[VERIFIED]
+    P[parent agent] -- fork once --> F[(Artifacts task fork)]
+    A[sub-api: claims src/api/**] -- commit --> F
+    U[sub-ui: claims src/ui/**] -- commit --> F
+    F -- push event --> Q[[Queue madgrix-events]]
+    Q --> T{{TaskAuthority<br/>Durable Object<br/>hash-chained ledger}}
+    T --> E[Evaluation domain<br/>mandatory gates]
+    E --> V[Blind verifiers<br/>commit → reveal → sign]
+    V --> S{Verdict seam}
+    S -- ACCEPT --> K[Single-use permit<br/>exact SHA + tree + HEAD]
+    K --> W[Workflow + Container<br/>promote]
+    W --> C[(canonical main)]
+    W --> B[signed bundle → offline verify]
+    S -- tamper / failed gate --> X[QUARANTINED / REJECT]
 ```
 
-| Cloudflare primitive | MADGRIX use |
-|---|---|
-| **Workers** | HTTP control plane, MCP surface and Queue consumer |
-| **Artifacts** | baseline/canonical Git repository, contender forks and scoped Git credentials |
-| **Queues** | real `cf.artifacts.repo.pushed` delivery into authority state |
-| **Durable Objects** | `TaskAuthority`, `PromotionContainer`, deployed `ModuleAgent` |
-| **Workflows** | one durable promotion instance per exact-state permit |
-| **Containers** | the trusted Git writer that fast-forwards canonical state to the reviewed SHA |
+Watch it happen with real data: **[/replay](https://madgrix.ygathuku96.workers.dev/replay)** replays the 25-entry ledger of live run `task_6cdb2087…` step by step (play, pause, speed). A second tab shows a tamperer, a false "done", a moved HEAD and an override attempt, **simulated from the test harness**.
 
-Only the promotion path receives canonical write authority.
+## What happens when agents…
 
-## MCP without an authority bypass
+### …need to know what other agents are doing?
+Before writing, each agent registers a **WorkClaim** (paths, symbols, intent) with the task's `TaskAuthority` Durable Object. Claims are ledgered, and overlapping claims are classified as a conflict risk. Agents read the shared picture through `GET /tasks/:id/context`, the read-only work graph at `/tasks/:id/graph`, or MCP tools (`inspect_work_graph`, `check_clearance`, `claim_work`). In the live run, `sub-api` held `src/api/**` and `sub-ui` held `src/ui/**` on one fork.
 
-The deployed competition branch exposes an MCP interface for coding agents. MCP is an **agent interface**, not a second policy path: the wrapper delegates tool calls back through the same core router, identity checks and `TaskAuthority` state machine used by REST.
+### …make conflicting changes?
+The parent combines lane commits with a per-file three-way merge. Disjoint edits become one **COMPOSED** commit. Overlapping lines become **CONFLICTED**: no commit is written and neither side is dropped. Only a **RESOLVED** commit can then be evaluated. A conflicted composition admits no evaluation, permit or promotion. If canonical HEAD moves after a permit is issued, the permit expires (`EXPIRED_HEAD_MOVED`). The candidate has to be rebased into a new SHA and re-earn its evidence.
 
-See [`docs/MCP_AGENT_TOOLS.md`](docs/MCP_AGENT_TOOLS.md).
+### …need everything they produce reviewed?
+Machines review, and nobody can talk them out of it:
+- An **independent evaluation domain** runs hidden tests, regressions and policy checks on the immutable candidate. Mandatory gates are non-compensatory: a failed gate loses even with perfect scores and a unanimous verifier vote.
+- **Blind verifiers** commit to their references *before* candidates exist, then reveal and sign (commit-then-reveal).
+- **Tamperers are quarantined mechanically**: modifying evaluation files taints the bundle and revokes the contender's write token.
+- **TheUstad** done-check: the combined commit must sit on the frozen baseline with a clean parent, or it is `FINAL FALSIFIED` and nothing is written.
 
-## Why this exists
+People handle escalations (ambiguity, trade-offs). Promotion stays blocked while a task is escalated, and no operator path can override an integrity gate.
 
-Fork-per-agent is becoming commodity infrastructure. The harder problem is **adjudication plus enforcement**:
+### …need to know why a change was made?
+Each task keeps a hash-chained ledger: intent, claims, composition, evidence, verdict, permit and promotion. The authority signs a DSSE/in-toto bundle for the exact promoted SHA. `npm run verify` checks it offline against a pinned key. `GET /tasks/:id/why/:sha` returns the causal proof graph that answers *why did this exact SHA have the right to become canonical?*
 
-1. **Intent before action.** Work begins from a frozen task: intent, baseline, behavior contract and policy.
-2. **Bounded authority.** Agents declare WorkClaims and receive credentials scoped to contender state, not canonical Git.
-3. **Independent evidence.** Evaluation uses a separate identity and read-only candidate access.
-4. **Non-compensatory gates.** Correctness, security, provenance, tamper or integrity failures cannot be outweighed by style or plausibility.
-5. **Blind verification.** Verifiers commit references before candidate exposure, reveal once and submit signed reports.
-6. **Exact-state authorization.** Canonicalization authority binds the precise candidate/evidence/policy/destination state.
-7. **Exact-state shipping.** The canonical writer promotes the reviewed candidate SHA itself; it does not invent a new merge commit after review.
-8. **Proof after shipping.** The authority signs a DSSE `promotion.bundle` whose chain can be verified offline against a pinned public key.
+## Real numbers
 
-## The 9-step real Cloudflare run
+| What | Result | Source |
+|---|---|---|
+| Live run `task_6cdb2087a04e389edc87de1c` | 9/9 steps · `concurrent_agents=3` (1 parent + 2 sub-agents) · TheUstad **FINAL VERIFIED** | live Cloudflare, [/replay](https://madgrix.ygathuku96.workers.dev/replay) |
+| Promoted SHA = reviewed SHA | `fc9c1e7084ad14067012a56e68bd8f4c5bdc85c2` | signed bundle, offline `verify` → **VERIFIED** |
+| Ledger | 25 hash-chained entries, from `authority_created` to `promotion_succeeded` | same bundle |
+| Earlier verified run | `task_0090714a2ca6e6c167ec410a` → promoted `3b71d3a` | [docs/LIVE_RUN_RESULTS.md](docs/LIVE_RUN_RESULTS.md) |
+| Adversarial trials | 26/26 blocked, 0 unauthorized promotions | `npm run attack:lab` (local, real modules) |
+| Module memory | second pass re-reads **25 of 184 files (13.6%)** after one edit | [docs/MODULE_MEMORY.md](docs/MODULE_MEMORY.md); vscode benchmark in [docs/MODULE_MEMORY_BENCHMARK.md](docs/MODULE_MEMORY_BENCHMARK.md) |
+| Test suite | 428 tests across 133 suites, all passing | `npm test` |
 
-`scripts/live-e2e.ts` intentionally uses the real infrastructure path; it does **not** use `FakeArtifacts`.
-
-```text
-1/9 freeze task and verifier identities
-2/9 commit blind-verifier references before candidates exist
-3/9 parent forks once; sub-agents commit concurrently on that fork
-4/9 wait for real Artifacts push events through Queue → TaskAuthority
-5/9 evaluate immutable candidate state in the independent evaluation domain
-6/9 reveal references and submit signed independent verdicts
-7/9 execute Verdict Seam and issue exact-state authority
-8/9 promote the exact reviewed commit to canonical Artifacts state
-9/9 fetch the signed bundle and verify it offline against the pinned key
-```
-
-TheUstad's role in this fork-crew path is precise: it is a **frozen-baseline integrity gate** checking the parent repository is still at the expected baseline and clean before composition. It does **not** semantically judge the combined candidate; independent evaluation and blind verification do that.
-
-Run 3 also proved the gates can say **no**: an attempt whose WorkClaim omitted `.madgrix/**` was rejected and nothing was promoted.
-
-## Exact-state promotion
-
-The trusted promotion path:
-
-1. reads the permit-bound destination HEAD;
-2. fetches the exact winner candidate SHA;
-3. recomputes `tree-digest/v1`;
-4. rejects tree mismatch or a foreign destination-head move;
-5. verifies ancestry;
-6. fast-forward pushes the **candidate SHA itself** to canonical `main`;
-7. consumes/finalizes authority only after the canonical write is known to exist;
-8. signs the ship record and hash-chained ledger head into `promotion.bundle`.
-
-The local head-move scenario records this fail-closed behavior as `HEAD-MOVE OK`.
-
-## Offline verification
-
-`src/cli/verify.ts` trusts only the public authority key pinned out of band (`keys/authority.pub` or `--trust-key`). A key embedded in the bundle cannot choose itself as trusted.
+## Quick start
 
 ```bash
-npm run verify -- --trust-key keys/authority.pub <promotion.bundle>
-```
-
-A successful transcript ends in:
-
-```text
-subject digest........ OK
-candidate digest...... OK
-chain integrity....... OK
-hidden evaluation..... PASSED
-policy digest......... OK
-destination base...... OK
-authority key......... PINNED
-signature............. VALID
-permit id............. RECOMPUTED FROM BOUND FIELDS
-ledger chain.......... OK
-
-VERIFIED
-```
-
-## Local verification
-
-Recommended environment: **Node 24**, npm, Git and Linux/WSL with LF shell scripts. Docker is required for `npm run build` because the build includes the promotion-container image.
-
-```bash
+git clone https://github.com/YashwanthGathuku/Madgrix && cd Madgrix
 npm ci
-npm run typecheck
-npm run build
-npm test
-npm run slice
-npm run headmove
-npm run verify -- --trust-key .slice-output/authority.pub .slice-output/promotion.bundle
-npm run bench
-npm run attack:lab
+npm test              # 428 tests
+npm run slice         # full protocol locally: claims → quarantine → blind verdict → permit → promote → signed bundle
+npm run attack:lab    # 26 adversarial trials against the real modules
 ```
 
-The competition tree has recorded a 402/402 local test run before the later MCP/canonicality additions; the current PR CI is the authoritative check for the exact current tree. The adversarial harness records 26/26 trials with `zero_tolerance_ok=true`.
+The live deployment and the live end-to-end harness (`npm run live:e2e`) need a Cloudflare account with Artifacts. See [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md).
 
-## Public competition surfaces
+## What only Git4agents does
 
-For the configured Run 4 task after the canonicality hardening branch is deployed:
+- **Blind commit-then-reveal evaluation.** Verifiers bind their references before any candidate exists.
+- **Mandatory, non-compensatory gates.** No score, vote or operator overrides a failed integrity gate.
+- **Mechanical quarantine.** Tampering with evaluation files quarantines the contender, taints its evidence and revokes its token.
+- **Exact-SHA, single-use promotion permits.** Each permit is bound to the SHA, tree, evidence, policy and destination HEAD, and is consumed once.
+- **Offline `verify` with a pinned key.** Anyone can re-check a promotion without trusting the server.
+- **TheUstad done-check.** "Done" is `FINAL VERIFIED` or `FINAL FALSIFIED`, never self-reported.
 
-```text
-Mission Control
-GET /tasks/task_79b1f9d610e94d8e95daa503/graph
+## Honest limits
 
-Canonicality projection
-GET /tasks/task_79b1f9d610e94d8e95daa503/canonicality
+- Four recorded live runs are evidence, not a reliability or scale statistic. The live crew is one parent plus **two scripted sub-agents**, not LLMs.
+- The `/replay` attack tab is **simulated from the local test harness**, not from live Cloudflare fault injection.
+- TheUstad checks the frozen baseline and a clean parent. It is not a semantic judge of the code.
+- In the live run, the first combined push was not applied, and the harness pushed again (shown in the replay). A deliberate live Queue redelivery test is not claimed.
+- Evaluation-domain auth is a bearer secret, not mTLS or workload identity. Signing is Ed25519 DSSE with a pinned key, with no KMS or HSM yet.
+- Fork-crew worktrees use scoped credentials but are not adversarial microVM isolation.
+- The longer list is in [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
 
-Why canonical?
-GET /tasks/task_79b1f9d610e94d8e95daa503/why/d55332b544992a2e033ca03fa54972c5283eef73
+## Architecture (Cloudflare products used)
 
-CanonCap
-GET /tasks/task_79b1f9d610e94d8e95daa503/canoncap/<permit_id>
-```
+| Product | Used for |
+|---|---|
+| **Workers** | `madgrix` Worker: REST API, `/mcp` endpoint, landing page, `/replay`, read-only work graph |
+| **Durable Objects** (SQLite) | `TaskAuthority`, one per task: claims, ledger and permits in storage transactions. `ModuleAgent`: per-module memory. `PromotionContainer`: container host |
+| **Queues** | `madgrix-events`: Artifacts push events, at-least-once, deduplicated per event key in the DO |
+| **Workflows** | `madgrix-promotion`: one instance per permit (the permit id is the instance id), which drives the container promotion |
+| **Containers** | `madgrix-promotion` image: trusted `promote.sh` / `rebase.sh`, which write only the permitted SHA |
+| **Artifacts** | Git repositories: the canonical `starter-repo` and per-task contender forks with scoped tokens |
 
-The new proof routes are read-only and restricted to `MADGRIX_PUBLIC_DEMO_TASK_ID`. Other task metadata is not opened by this layer.
-
-## Precise non-claims / known limits
-
-- Four successful runs are evidence, **not** a production reliability or scale statistic.
-- The recorded sub-agents are scripted commands, not LLMs.
-- TheUstad is the frozen-baseline/clean-parent gate described above, not the semantic judge of the combined candidate.
-- Attack Lab is local protocol fault/adversarial validation, not live Cloudflare fault injection.
-- Real Queue push delivery was observed; a deliberate real at-least-once redelivery test is not claimed.
-- Workflow/Container success is live-verified; not every retry/restart/terminate failure branch was fault-injected live.
-- Evaluation-domain authentication is a distinct bearer secret, not mTLS/workload identity.
-- Competition signing is Ed25519 DSSE with a pinned public key; production KMS/HSM/Sigstore lifecycle is future hardening.
-- The recorded fork-crew uses local Git worktrees and scoped credentials; those worktrees are not claimed as adversarial microVM isolation.
-- CanonCap, Conflict Capsule and Causal Proof Graph are **candidate MADGRIX abstractions**. Capability security, proof-carrying change, provenance DAGs and structured conflicts have prior art; see [`docs/CANONICALITY_PRIOR_ART.md`](docs/CANONICALITY_PRIOR_ART.md).
-
-See [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) for the longer list.
-
-## Repository map
-
-```text
-src/
-  worker/entrypoint.ts       MCP + read-only canonicality projections
-  worker/index.ts            core Worker routes + Queue + PromotionWorkflow
-  worker/canonicality-panel.ts Mission Control canonicality view
-  do/TaskAuthority.ts        authoritative per-task state machine
-  do/PromotionContainer.ts   trusted Git promotion controller
-  do/ModuleAgent.ts          module-memory Durable Object
-  lib/canoncap.ts            CanonCap descriptor + exact-state predicate check
-  lib/causal-proof.ts        Causal Proof Graph projection
-  lib/conflict-capsule.ts    content-addressed conflict projection
-  lib/                       protocol, evaluation, verifier, permit, attestation
-  harness/                   deterministic local protocol proofs
-  cli/verify.ts              offline promotion-bundle verifier
-
-scripts/
-  live-e2e.ts                real Cloudflare competition path
-  attack-lab.ts              judge-facing adversarial protocol demo
-  run-fork-crew.mjs          parent + sub-agent contender workflow
-  evaluate-candidate.ts      evaluation-domain runner
-
-container/                   trusted Git writer / rebase scripts
-test/                        unit, integration and adversarial tests
-specs/                       frozen contracts + canonicality candidate specs
-docs/                        architecture, live evidence, security, demo, research
-```
-
-## Key documents
-
-- [`docs/FINAL_COMPETITION_DEMO.md`](docs/FINAL_COMPETITION_DEMO.md) — final 5–10 minute recording runbook
-- [`docs/CANONICALITY_PRIMITIVES.md`](docs/CANONICALITY_PRIMITIVES.md) — the new canonicality framing
-- [`docs/CANONICALITY_PRIOR_ART.md`](docs/CANONICALITY_PRIOR_ART.md) — explicit novelty boundary
-- [`docs/CLOUDFLARE_ARCHITECTURE.md`](docs/CLOUDFLARE_ARCHITECTURE.md) — deployed architecture/status
-- [`docs/LIVE_RUN_RESULTS.md`](docs/LIVE_RUN_RESULTS.md) — all four live runs
-- [`docs/MCP_AGENT_TOOLS.md`](docs/MCP_AGENT_TOOLS.md) — MCP agent interface
-- [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) — current limits/non-claims
-- [`docs/SECURITY.md`](docs/SECURITY.md) — threat model
-- [`keys/README.md`](keys/README.md) — pinned authority-key model
+More detail is in [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The previous long-form README, with CanonCap, the causal proof graph, conflict capsules and the full route list, is at [docs/README_FULL.md](docs/README_FULL.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE) © 2026 Yashwanth Gathuku

@@ -48,6 +48,7 @@
  * body and never logged.
  */
 
+import { renderReplayPage } from "./replay-page.ts";
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 
@@ -1783,8 +1784,10 @@ function landingPage(env: Env): Response {
 <h1>Git4agents</h1>
 <p>A governed promotion protocol for autonomous software agents, running on Cloudflare Workers, Durable Objects, Queues, Workflows, Containers and Artifacts. This Worker is <code>madgrix</code>.</p>
 <p>Agents compete on one frozen task in isolated Artifact repositories. Evidence comes from a separate evaluation domain, blind verifiers sign reports, and a single-use exact-state permit lets only the reviewed commit reach canonical history. Every promotion ships a signed bundle you can verify offline.</p>
+<p><a href="/replay"><b>▶ Watch the replay</b></a>: the recorded live run, step by step, plus the attack scenarios.</p>
 <h2>Open without a token</h2>
 <ul>
+<li><a href="/replay"><code>GET /replay</code></a> — animated replay of a verified live run</li>
 <li><a href="/health"><code>GET /health</code></a> — liveness</li>
 <li><code>GET /tasks/:id/ledger</code> — a task's hash-chained ledger</li>
 <li><code>GET /tasks/:id/attestation/:permit_id/verify</code> — permit attestation check</li>
@@ -1803,6 +1806,17 @@ async function route(request: Request, env: Env): Promise<Response> {
 	if (request.method === "GET" && parts.length === 0) return landingPage(env);
 	if (request.method === "GET" && parts.length === 1 && parts[0] === "health") {
 		return json({ ok: true, service: "madgrix", protocol: "git4agents" }, 200);
+	}
+	// GET /replay — static, self-contained replay of a recorded live run.
+	if (request.method === "GET" && parts.length === 1 && parts[0] === "replay") {
+		return new Response(renderReplayPage(), {
+			status: 200,
+			headers: {
+				"content-type": "text/html; charset=utf-8",
+				"content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
+				"cache-control": "public, max-age=300",
+			},
+		});
 	}
 	// POST /module-agents/{load,wake,memory,route} — control plane only.
 	if (request.method === "POST" && parts.length === 2 && parts[0] === "module-agents") {
