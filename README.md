@@ -17,6 +17,12 @@ Git was designed around human developers, social review, branch permissions, and
 
 [![Git4agents landing page: hanging marquee, isometric repo mall preview, how-it-works steps, receipts of the real runs](docs/assets/landing.png)](https://madgrix.ygathuku96.workers.dev/)
 
+## Demo video
+
+<video src="git4agents-demo.mp4" controls width="100%"></video>
+
+A 2.5-minute walkthrough: the live deployment, the trust board with recorded runs, a 300-agent swarm test against a real codebase, the deterministic replay, and the unified dashboard. Every command is typed and run live; every output is real.
+
 ## Why Git4agents: strongest features
 
 Judging criteria tags: **[O]** originality · **[C]** concurrency, coordination & conflict · **[E]** ease of use.
