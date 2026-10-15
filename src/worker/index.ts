@@ -1577,6 +1577,44 @@ export async function handleLedger(env: Env, taskId: string): Promise<Response> 
 }
 
 /**
+ * GET /tasks/:id/board-state — read-only, public-safe projection of task
+ * state for the /board live mode. Whitelisted fields only: agent ids, claim
+ * paths, contender status, gate booleans, ledger kinds/hashes. No tokens,
+ * token ids, credentials, keys or report bodies.
+ */
+export async function handleBoardState(env: Env, taskId: string): Promise<Response> {
+	const read = await readTaskState(env, taskId);
+	if (!read.ok) return json(read.body, read.status);
+	const st = read.state as any;
+	const claims: any[] = Array.isArray(st.claims) ? st.claims : [];
+	const contenders: any[] = Object.values(st.contenders ?? {});
+	const evals: any[] = Object.values(st.evaluations ?? {});
+	const ledger: any[] = Array.isArray(st.ledger) ? st.ledger : [];
+	const pass = (v: any) => (typeof v === "boolean" ? v : !!(v && v.passed === true));
+	const verdicts: any[] = Array.isArray(st.verdicts) ? st.verdicts : [];
+	const last = verdicts[verdicts.length - 1] ?? null;
+	return json({
+		task_id: taskId,
+		status: String(st.task_status ?? ""),
+		repo: String(st.task?.repo ?? st.task?.canonical_repo ?? ""),
+		counts: { claims: claims.length, contenders: contenders.length, evaluations: evals.length, ledger: ledger.length },
+		claims: claims.slice(0, 200).map((c) => ({ agent: String(c.agent ?? ""), paths: (c.scope?.paths ?? []).slice(0, 8).map(String), status: String(c.status ?? "") })),
+		contenders: contenders.slice(0, 200).map((c) => ({ agent: String(c.agent_id ?? ""), contender: String(c.contender_id ?? ""), status: String(c.status ?? ""), commit: c.latest_commit ? String(c.latest_commit) : null })),
+		evaluations: evals.slice(0, 50).map((e) => ({
+			sha: String(e.candidate_sha ?? ""),
+			contender: String(e.contender_id ?? ""),
+			gates: {
+				exact_baseline: pass(e.admission?.exact_baseline), scope_compliance: pass(e.admission?.scope_compliance), valid_tool_states: pass(e.admission?.valid_tool_states),
+				no_eval_tampering: pass(e.admission?.no_eval_tampering), provenance_complete: pass(e.admission?.provenance_complete),
+				hidden_oracle: pass(e.hidden_oracle), regressions: pass(e.regressions), static_analysis: pass(e.static_analysis), security_policy: pass(e.security_policy),
+			},
+		})),
+		verdict: last ? { winner: last.winner_sha ? String(last.winner_sha) : null, state: String(last.state ?? "") } : null,
+		ledger: ledger.slice(-60).map((e) => ({ seq: e.seq, kind: String(e.kind), ts: String(e.ts), hash: String(e.entry_hash ?? "").slice(0, 16) })),
+	});
+}
+
+/**
  * GET /tasks/:id/attestation/:pid/verify — platform-level permit
  * verification: recompute the permit id from its bound fields (spec 1 §10)
  * and check consumption + destination HEAD. This is NOT the full spec-4
@@ -1816,7 +1854,7 @@ async function route(request: Request, env: Env): Promise<Response> {
 			status: 200,
 			headers: {
 				"content-type": "text/html; charset=utf-8",
-				"content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
+				"content-security-policy": "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
 				"cache-control": "public, max-age=300",
 			},
 		});
@@ -1882,6 +1920,9 @@ async function route(request: Request, env: Env): Promise<Response> {
 		}
 		if (request.method === "POST" && action === "rebase" && parts.length === 3) {
 			return handleRebase(env, taskId, request);
+		}
+		if (request.method === "GET" && action === "board-state" && parts.length === 3) {
+			return handleBoardState(env, taskId);
 		}
 		if (request.method === "GET" && action === "ledger" && parts.length === 3) {
 			return handleLedger(env, taskId);

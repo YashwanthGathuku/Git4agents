@@ -292,8 +292,44 @@ function scale(){var s=sc;steps=[];
  W(1200,function(){rx("amb",null,s.overlaps_flagged+" of "+s.seeded_overlaps+" seeded overlaps flagged · "+s.false_flags+" false flags","");rx(s.chain_ok?"ok":"bad",null,"ledger: "+s.ledger_entries+" entries · hash chain "+(s.chain_ok?"OK":"FAIL"),"");rx("",null,"errors: "+s.errors+" · p50 "+s.p50+" ms · p95 "+s.p95+" ms","")});
  W(3000,function(){});
  $("approve").disabled=true}
+// ---------- REAL-TIME mode: polls GET /tasks/:id/board-state (read-only) ----------
+var LIVE={on:false,ids:[],cur:null,seen:{},sig:"",t:null};
+function liveIds(){var q=new URLSearchParams(location.search).get("task");var ids=q?q.split(",").filter(Boolean):[];
+ D.scenarios.forEach(function(x){if(x.task&&ids.indexOf(x.task)<0&&x.id!=="scale")ids.push(x.task)});return ids}
+function startLive(id){stop();LIVE.on=true;LIVE.ids=liveIds();LIVE.cur=id||LIVE.cur||LIVE.ids[0];LIVE.sig="";
+ document.querySelectorAll(".sc button").forEach(function(b){b.setAttribute("aria-pressed",b.dataset.id==="live")});
+ $("badge").textContent="LIVE · polling real task state";$("badge").className="badge real";poll()}
+function poll(){clearTimeout(LIVE.t);if(!LIVE.on)return;var id=LIVE.cur;
+ fetch("/tasks/"+encodeURIComponent(id)+"/board-state",{cache:"no-store"}).then(function(r){return r.json()}).then(function(s){if(!LIVE.on||id!==LIVE.cur)return;renderLive(s)})
+ .catch(function(e){rx("bad",null,"poll failed: "+e,"")}).then(function(){LIVE.t=setTimeout(poll,4000)})}
+function renderLive(s){var sig=JSON.stringify([s.counts,s.status,(s.contenders||[]).map(function(c){return c.status+c.commit}),(s.evaluations||[]).length]);if(sig===LIVE.sig){$("lpoll").textContent="last poll "+new Date().toLocaleTimeString();return}LIVE.sig=sig;
+ var agents={},order=[];function A(id){if(!agents[id]){agents[id]={id:id,role:"enrolled",intent:"(live) claimed paths below",paths:[],commit:null};order.push(id)}return agents[id]}
+ (s.claims||[]).forEach(function(c){var a=A(c.agent);c.paths.forEach(function(p){if(a.paths.indexOf(p)<0)a.paths.push(p)})});
+ var byC={};(s.contenders||[]).forEach(function(c){var a=A(c.agent);a.role=c.status;a.commit=c.commit?c.commit.slice(0,12):null;byC[c.contender]=a});
+ var evals=(s.evaluations||[]).map(function(e){var a=byC[e.contender];return {sha:e.sha,contender:e.contender,gates:e.gates,agent:a?a.id:e.contender,changed:a?a.paths:[]}});
+ var promoted=s.status==="promoted"&&s.verdict&&s.verdict.winner;
+ sc={id:"live",label:"Live",badge:"REAL",task:s.task_id,repo:s.repo||"live task",agents:order.slice(0,60).map(function(k){return agents[k]}),evals:evals,overlaps:[],ledger:[],intents_source:"GET /tasks/"+s.task_id+"/board-state (live)",summary:{promoted_sha:promoted||null}};
+ var q=(sc.agents.filter(function(a){return a.role==="quarantined"})[0]);sc.quarantine=q?{agent:q.id,trigger:"contender_quarantined (see ledger)",evidence:""}:null;
+ common();
+ var tabs='<div class="row">'+LIVE.ids.map(function(t){return '<button class="chip'+(t===LIVE.cur?' p':'')+'" data-lt="'+esc(t)+'" style="border:0;cursor:pointer">'+esc(t.slice(0,14))+'…</button>'}).join(" ")+'</div><div class="row" style="font-size:11px;color:var(--dim)">Add tasks with ?live=1&amp;task=&lt;id&gt;. There is no public task index; these are the watched ids.</div><div class="row" id="lpoll" style="font-size:11px;color:var(--dim)"></div>';
+ det('<h3>● Live: '+esc(s.task_id)+'</h3><div class="row"><b>status</b>'+esc(s.status)+'</div><div class="row"><b>counts</b>'+s.counts.claims+' claims · '+s.counts.contenders+' forks · '+s.counts.evaluations+' evals · '+s.counts.ledger+' ledger</div>'+tabs);
+ document.querySelectorAll("[data-lt]").forEach(function(b){b.onclick=function(){startLive(b.dataset.lt)}});
+ if(sc.agents.some(function(a){return a.paths.length}))buildShops(sc.agents.slice(0,60).map(function(a){return {paths:a.paths.slice(0,3)}}).slice(0,10));
+ stats([["status",s.status||"—",s.status==="promoted"?"ok":""],["forks",s.counts.contenders,""],["claims",s.counts.claims,""],["evaluations",s.counts.evaluations,""],["quarantined",sc.agents.filter(function(a){return a.role==="quarantined"}).length,"bad"],["promoted",promoted?short(promoted):"—",promoted?"ok":""]]);
+ $("legend").innerHTML="<b>LIVE</b>: every agent, path, gate and ledger line is polled from the real task every 4 s; the building and walking are a visualization.";
+ (s.ledger||[]).forEach(function(e){rx(/quarantin|fail|reject/.test(e.kind)?"bad":(/promotion_succeeded|verdict/.test(e.kind)?"ok":""),e.seq,e.kind,e.hash.slice(0,8))});
+ sc.agents.forEach(function(a,i){var p=person(a.id,i,a.id.length>14?a.id.slice(0,13)+"…":a.id);var isNew=!LIVE.seen[s.task_id+a.id];LIVE.seen[s.task_id+a.id]=1;
+  var f=a.paths[0],sh=f?shopOf(f):null,tgt=sh&&sh.slots[f]?[sh.slots[f][0]+((i%3)-1)*12,sh.slots[f][1]+18]:[150,280+(i%8)*12];
+  var ev=evals.filter(function(e){return e.agent===a.id})[0],ok=ev&&Object.keys(ev.gates).every(function(k){return ev.gates[k]});
+  if(a.role==="quarantined"){tgt=[640+(i%4)*30,520];setLevel(sh,null,true);$("qreason").textContent="quarantined: "+a.id}
+  else if(promoted&&ev&&ev.sha===promoted){tgt=[860+(i%4)*28,90+Math.floor(i/4)*36];p.bag.setAttribute("opacity",1);a.paths.forEach(function(pp){setLevel(shopOf(pp),3)})}
+  else if(ev){tgt=[748,180+(i%3)*82+20];if(!ok){var gn=gateNames(ev);Object.keys(GATES).forEach(function(k,j){lamp(j,gn[k])})}}
+  else if(sh){setLevel(sh,2);take(sh,f)}
+  if(isNew){p.x=20;p.y=300;place(p);move(p,[[138,320],tgt],2200)}else{p.x=tgt[0];p.y=tgt[1];place(p)}});
+ if(promoted){car("#e07a5f",short(promoted),300);verdict=true}
+}
 // ---------- engine ----------
-function load(id){stop();sc=D.scenarios.filter(function(x){return x.id===id})[0]||D.scenarios[0];
+function load(id){if(id==="live")return startLive();LIVE.on=false;clearTimeout(LIVE.t);stop();sc=D.scenarios.filter(function(x){return x.id===id})[0]||D.scenarios[0];
  document.querySelectorAll(".sc button").forEach(function(b){b.setAttribute("aria-pressed",b.dataset.id===sc.id)});
  $("badge").textContent=sc.badge+" data · illustrated";$("badge").className="badge "+(sc.badge==="REAL"?"real":"viz");
  common();({crew:crew,cheater:cheater,scale:scale})[sc.id]();
@@ -306,9 +342,10 @@ function stop(){playing=false;clearTimeout(timer);$("play").textContent="▶ Pla
 $("play").onclick=function(){playing?stop():play()};$("restart").onclick=function(){load(sc.id)};
 $("approve").onclick=function(){if(!verdict||promoted)return;rx("note",null,"Approve: replaying the recorded promotion (no live call)","");promote()};
 $("override").onclick=function(){$("refuse").textContent="Refused: mandatory gates cannot be waived"};
+(function(){var b=document.createElement("button");b.textContent="● Live";b.dataset.id="live";b.onclick=function(){startLive()};$("sc").appendChild(b)})();
 D.scenarios.forEach(function(x){var b=document.createElement("button");b.textContent=x.label;b.dataset.id=x.id;b.onclick=function(){load(x.id)};$("sc").appendChild(b)});
 var qs=new URLSearchParams(location.search);if(qs.get("speed"))$("speed").value=qs.get("speed");if(qs.get("loop")==="1")$("loop").checked=true;
-load(qs.get("scenario")||"crew");if(qs.get("step")){document.body.classList.add("static");runTo(parseInt(qs.get("step"),10)||0)}if(qs.get("agent"))showAgent(qs.get("agent"));if(qs.get("shop")&&shops[qs.get("shop")])showShop(shops[qs.get("shop")]);else if(qs.get("autoplay")==="1")play();
+if(qs.get("live")==="1"||!qs.get("scenario")){startLive()}else load(qs.get("scenario"));if(qs.get("step")){document.body.classList.add("static");runTo(parseInt(qs.get("step"),10)||0)}if(qs.get("agent"))showAgent(qs.get("agent"));if(qs.get("shop")&&shops[qs.get("shop")])showShop(shops[qs.get("shop")]);if(!qs.get("step")&&!LIVE.on&&qs.get("autoplay")==="1")play();
 window.__board={runTo:runTo,steps:function(){return steps.length},load:load,showAgent:showAgent,showShop:function(n){showShop(shops[n])}};
 })();
 </script></body></html>`;

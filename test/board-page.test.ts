@@ -57,3 +57,19 @@ describe("GET /board", () => {
 		assert.notEqual(res.status, 200);
 	});
 });
+
+describe("GET /tasks/:id/board-state", () => {
+	it("404s for an unknown task and never leaks token fields", async () => {
+		const h = await makeHarness();
+		const res = await worker.fetch(new Request("https://madgrix.test/tasks/task_nope/board-state"), h.env as any);
+		assert.notEqual(res.status, 200);
+		const body = await res.text();
+		assert.doesNotMatch(body, /token_id|art_v2|Bearer /);
+	});
+	it("board page allows same-origin polling for live mode", async () => {
+		const h = await makeHarness();
+		const res = await worker.fetch(new Request("https://madgrix.test/board?live=1"), h.env as any);
+		assert.match(res.headers.get("content-security-policy") ?? "", /connect-src 'self'/);
+		assert.match(await res.text(), /board-state/);
+	});
+});
