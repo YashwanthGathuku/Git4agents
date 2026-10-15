@@ -1,0 +1,47 @@
+/** GET /board: self-contained trust board built only from recorded data. */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { makeHarness, worker } from "./helpers/worker-harness.ts";
+import { BOARD_DATA } from "../src/worker/board-data.ts";
+
+describe("GET /board", () => {
+	it("serves a self-contained HTML page with a strict CSP", async () => {
+		const h = await makeHarness();
+		const res = await worker.fetch(new Request("https://madgrix.test/board"), h.env as any);
+		assert.equal(res.status, 200);
+		assert.match(res.headers.get("content-type") ?? "", /text\/html/);
+		assert.match(res.headers.get("content-security-policy") ?? "", /default-src 'none'/);
+		const html = await res.text();
+		assert.match(html, /trust board/);
+		assert.match(html, /Approve &amp; promote/);
+		assert.match(html, /Refused: mandatory gates cannot be waived/);
+		assert.doesNotMatch(html, /<script[^>]+src=/);
+		assert.doesNotMatch(html, /https?:\/\/[^"']*(cdn|unpkg|jsdelivr)/i);
+		assert.doesNotMatch(html, /art_v2|Bearer /);
+	});
+
+	it("is linked from the landing page", async () => {
+		const h = await makeHarness();
+		const home = await (await worker.fetch(new Request("https://madgrix.test/"), h.env as any)).text();
+		assert.match(home, /href="\/board"/);
+	});
+
+	it("carries the three recorded scenarios with their measured numbers", () => {
+		const [crew, cheater, scale] = BOARD_DATA.scenarios as any;
+		assert.equal(crew.task, "task_99f82dca34d72b85dc1ee92a");
+		assert.equal(crew.agents.length, 13);
+		assert.equal(crew.ustad, "FINAL VERIFIED");
+		assert.equal(cheater.task, "task_6dce45beed286be0230b754e");
+		assert.equal(cheater.quarantine.agent, "cheater-cal");
+		assert.equal(cheater.quarantine.trigger, "eval_file_modification");
+		assert.equal(scale.n, 3000);
+		assert.equal(scale.overlaps_flagged, 149);
+		assert.ok(BOARD_DATA.scenarios.every((s: any) => s.badge === "REAL" || s.badge === "SIMULATED"));
+	});
+
+	it("non-GET is not served as the board", async () => {
+		const h = await makeHarness();
+		const res = await worker.fetch(new Request("https://madgrix.test/board", { method: "POST" }), h.env as any);
+		assert.notEqual(res.status, 200);
+	});
+});

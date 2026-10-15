@@ -8,7 +8,14 @@ Agents can now write code faster than anyone can review it. Branch permissions s
 Git4agents lets many agents work in parallel, but only one exact commit, checked by gates nobody can override, can become canonical.
 Every promotion leaves a signed bundle you can verify offline, so "it passed review" is checkable instead of a claim.
 
-**Live:** https://madgrix.ygathuku96.workers.dev · **▶ Replay of a verified live run:** https://madgrix.ygathuku96.workers.dev/replay · **Attack scenarios (simulated):** [/replay?scenario=sim](https://madgrix.ygathuku96.workers.dev/replay?scenario=sim) · **Demo video:** _link to be added_ (script: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md))
+**Live:** https://madgrix.ygathuku96.workers.dev · **◆ Trust board:** https://madgrix.ygathuku96.workers.dev/board · **▶ Replay of a verified live run:** https://madgrix.ygathuku96.workers.dev/replay · **Attack scenarios (simulated):** [/replay?scenario=sim](https://madgrix.ygathuku96.workers.dev/replay?scenario=sim) · **Demo video:** _link to be added_ (script: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md))
+
+[![Trust board: live cheater run, cheater-cal quarantined at the gates, honest-ana promoted and VERIFIED](docs/assets/board-cheater.gif)](https://madgrix.ygathuku96.workers.dev/board?scenario=cheater&autoplay=1)
+
+[/board](https://madgrix.ygathuku96.workers.dev/board): three recorded live runs on a treemap of ky. Crew of 13 · cheater quarantined · 3,000-agent claims. All REAL, numbers from the ledgers and logs (`scripts/build-board-data.py`).
+
+| ![board crew](docs/assets/board-crew.png) | ![board scale](docs/assets/board-scale.png) |
+|---|---|
 
 ![Live cheater run: cheater-cal quarantined (eval_file_modification), TheUstad FINAL FALSIFIED, tampered bundle NOT VERIFIED](docs/assets/live-cheater-quarantine.gif)
 
