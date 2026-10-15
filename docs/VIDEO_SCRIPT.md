@@ -1,14 +1,14 @@
 # Git4agents: demo video script (about 8 minutes)
 
-**Setup:** Use a 1920×1080 screen. On the left, a browser at `https://madgrix.ygathuku96.workers.dev/replay` (dark theme, speed 1×). On the right, a terminal in a clone of the repo with `npm ci` already done. Have `/workspace/live-run-final-4.log` ready to show, or the README "Real numbers" table.
+**Setup:** Use a 1920×1080 screen. On the left, a browser at `https://madgrix.ygathuku96.workers.dev/board?scenario=cheater` (the repo mall, speed 1×). On the right, a terminal in a clone of the repo with `npm ci` already done. Have `/workspace/live-run-final-4.log` ready to show, or the README "Real numbers" table.
 **Rule:** Every claim on screen is either the real live run (green banner "REAL") or explicitly "SIMULATED FROM TEST HARNESS" (amber banner). Say which one is on screen.
 
 ---
 
-**[0:00–0:15] Cold open (browser: /replay?scenario=sim, paused)**
+**[0:00–0:15] Cold open (browser: /board?scenario=cheater, paused)**
 > "This is an AI agent trying to cheat. Watch what happens."
 
-**[0:15–0:45] The cheater (press ▶ on the Attacks tab, 1×)**
+**[0:15–0:45] The cheater (press ▶ Play on the Cheater scenario, 1×)**
 *Beat 1 lights "Tamperer edits the evaluator", then beat 2 lights red: "QUARANTINED".*
 > "This tab is simulated from our test harness. These are the real protocol modules running locally. A contender edited the evaluation files to make its own tests pass. Git4agents doesn't ask anyone whether that's okay. The tamper flag trips, the contender is quarantined, its evidence is marked tainted, and its write token is revoked. Its next push fails with TOKEN_REVOKED."
 

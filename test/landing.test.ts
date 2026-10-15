@@ -29,3 +29,21 @@ describe("public landing routes", () => {
 		assert.equal(other.status, 401);
 	});
 });
+
+describe("landing page and retired /replay", () => {
+	it("landing is self-contained with CSP, links to /board and /board/new, real numbers", async () => {
+		const h = await makeHarness();
+		const res = await worker.fetch(new Request("https://madgrix.test/"), h.env as any);
+		assert.match(res.headers.get("content-security-policy") ?? "", /default-src 'none'/);
+		const html = await res.text();
+		for (const s of ['href="/board"', 'href="/board/new"', "3,000", "149 / 149", "d5bcf018194b", "f27946233a53", "eval_file_modification", "MIT license", "Honest limits"]) assert.ok(html.includes(s), s);
+		assert.doesNotMatch(html, /<script/);
+		assert.doesNotMatch(html, /\/replay/);
+	});
+	it("GET /replay 301-redirects to /board keeping the query", async () => {
+		const h = await makeHarness();
+		const res = await worker.fetch(new Request("https://madgrix.test/replay?scenario=sim"), h.env as any);
+		assert.equal(res.status, 301);
+		assert.equal(res.headers.get("location"), "/board?scenario=sim");
+	});
+});

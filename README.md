@@ -8,7 +8,7 @@ Agents can now write code faster than anyone can review it. Branch permissions s
 Git4agents lets many agents work in parallel, but only one exact commit, checked by gates nobody can override, can become canonical.
 Every promotion leaves a signed bundle you can verify offline, so "it passed review" is checkable instead of a claim.
 
-**Live:** https://madgrix.ygathuku96.workers.dev · **◆ Trust board:** https://madgrix.ygathuku96.workers.dev/board · **▶ Replay of a verified live run:** https://madgrix.ygathuku96.workers.dev/replay · **Attack scenarios (simulated):** [/replay?scenario=sim](https://madgrix.ygathuku96.workers.dev/replay?scenario=sim) · **Demo video:** _link to be added_ (script: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md))
+**Live:** https://madgrix.ygathuku96.workers.dev · **◆ Trust board:** https://madgrix.ygathuku96.workers.dev/board · **＋ Bring your repo:** https://madgrix.ygathuku96.workers.dev/board/new · **Demo video:** _link to be added_ (script: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md))
 
 [![Trust board mall: live cheater run, cheater-cal stopped by security and taken to the quarantine room, false-done-fay turned back at checkout, honest-ana drives off with the promoted SHA](docs/assets/board-cheater.gif)](https://madgrix.ygathuku96.workers.dev/board?scenario=cheater&autoplay=1)
 
@@ -44,7 +44,7 @@ flowchart LR
       S2[sub-agent B]
     end
     subgraph CF[Cloudflare]
-      W[Worker madgrix<br/>REST · /mcp · /replay · /graph]
+      W[Worker madgrix<br/>REST · /mcp · /board · /graph]
       DO{TaskAuthority<br/>Durable Object<br/>claims · ledger · permits}
       Q[[Queue madgrix-events]]
       ART[(Artifacts<br/>canonical repo + task forks)]
@@ -65,7 +65,7 @@ flowchart LR
 
 | Product | Used for |
 |---|---|
-| **Workers** | `madgrix` Worker: REST API, `/mcp` endpoint, landing page, `/replay`, read-only work graph |
+| **Workers** | `madgrix` Worker: REST API, `/mcp` endpoint, landing page, `/board` (repo mall, live mode, `/board/new`), read-only work graph |
 | **Durable Objects** (SQLite) | `TaskAuthority`, one per task: claims, ledger and permits in storage transactions. `ModuleAgent`: per-module memory. `PromotionContainer`: container host |
 | **Queues** | `madgrix-events`: Artifacts push events, at-least-once, deduplicated per event key in the DO |
 | **Workflows** | `madgrix-promotion`: one instance per permit (the permit id is the instance id), which drives the container promotion |
@@ -127,9 +127,8 @@ stateDiagram-v2
 
 | Landing | Replay: mid-run |
 |---|---|
-| ![landing](docs/assets/landing.png) | ![replay mid-run](docs/assets/replay-midrun.png) |
+| ![landing](docs/assets/landing.png) | ![board crew](docs/assets/board-crew-done.png) |
 | **Replay: finished (offline verify VERIFIED)** | **Attack tab (simulated): QUARANTINED** |
-| ![replay finished](docs/assets/replay-finished.png) | ![simulated quarantine](docs/assets/replay-sim-quarantined.png) |
 
 ## How Git4agents answers the four questions
 
@@ -155,7 +154,7 @@ Each task keeps a hash-chained ledger: intent, claims, composition, evidence, ve
 
 | What | Result | Source |
 |---|---|---|
-| Live run `task_6cdb2087a04e389edc87de1c` | 9/9 steps · `concurrent_agents=3` (1 parent + 2 sub-agents) · TheUstad **FINAL VERIFIED** | live Cloudflare, [/replay](https://madgrix.ygathuku96.workers.dev/replay) |
+| Live run `task_6cdb2087a04e389edc87de1c` | 9/9 steps · `concurrent_agents=3` (1 parent + 2 sub-agents) · TheUstad **FINAL VERIFIED** | live Cloudflare, [/board](https://madgrix.ygathuku96.workers.dev/board) |
 | Promoted SHA = reviewed SHA | `fc9c1e7084ad14067012a56e68bd8f4c5bdc85c2` | signed bundle, offline `verify` → **VERIFIED** |
 | Ledger | 25 hash-chained entries, from `authority_created` to `promotion_succeeded` | same bundle |
 | Earlier verified run | `task_0090714a2ca6e6c167ec410a` → promoted `3b71d3a` | [docs/LIVE_RUN_RESULTS.md](docs/LIVE_RUN_RESULTS.md) |
@@ -239,7 +238,7 @@ node scripts/scale-agents.mjs --mode local --ramp 10,100,1000   # no account nee
 ## Honest limits
 
 - Live runs are evidence, not a reliability statistic. All live agents are **scripted** (shell commands or `scripts/live-cheater-demo.mjs`), not LLMs.
-- The `/replay` attack tab is **simulated from the local test harness**, not live fault injection. The live cheater run is the live counterpart for quarantine.
+- The old `/replay` page is retired (301 → `/board`). Simulated attacks live in the local test harness (`npm run attack:lab`); the live cheater run on `/board` is the live counterpart.
 - TheUstad only checks the frozen baseline and a clean parent; it is not a semantic judge. In the cheater video, the FALSIFIED check runs TheUstad locally on a clone with a wrong baseline, not inside the Worker.
 - Overlapping claims are **flagged**, not refused. Scale numbers are for the claim/coordination layer on one task; commits go through fork crews, not one fork per agent. Claim latency grows with N because one Durable Object serializes a task.
 - In live runs the first push was sometimes not observed and the harness pushed again (logged). A deliberate Queue redelivery test is not claimed.

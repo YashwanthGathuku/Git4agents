@@ -88,7 +88,7 @@ html,body{background:#f6ecd9}
 </style></head><body><div id="app">
 <header id="marquee"><i class="chain l"></i><i class="chain r"></i><div class="board"><div class="bulbs"></div><h1>Git4agents <em>repo mall</em></h1><div class="tagline">the trust board · <span id="badge" class="badge real">REAL</span></div>
 <div class="sc" id="sc"></div>
-<div class="ctl"><button id="play">▶ Play</button><button id="restart" title="restart">⟲</button><label>speed <select id="speed"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>×</label><label><input type="checkbox" id="loop"> loop</label><a href="/">home</a>·<a href="/replay">replay</a>·<a href="/board/new">open your repo</a></div></div>
+<div class="ctl"><button id="play">▶ Play</button><button id="restart" title="restart">⟲</button><label>speed <select id="speed"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>×</label><label><input type="checkbox" id="loop"> loop</label><a href="/">home</a>·<a href="/board/new">open your repo</a></div></div>
 <section id="stats"></section></header>
 <main id="mall"><svg id="svg" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Mall floor plan"></svg><div id="legend"></div>
 <div id="register"><div class="receipt"><h2>LEDGER RECEIPT</h2><div class="sub" id="rxsub"></div><div id="rx"></div></div>

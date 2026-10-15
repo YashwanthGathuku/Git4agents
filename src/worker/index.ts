@@ -48,7 +48,7 @@
  * body and never logged.
  */
 
-import { renderReplayPage } from "./replay-page.ts";
+import { renderLanding } from "./landing-page.ts";
 import { renderBoardPage } from "./board-page.ts";
 import { renderNewPage, handleNewBoard } from "./board-new.ts";
 import { WorkflowEntrypoint } from "cloudflare:workers";
@@ -1817,27 +1817,8 @@ function landingPage(env: Env): Response {
 		? `<li><a href="/tasks/${demo}/graph">Demo task work graph</a> (read-only)</li>
 <li><a href="/tasks/${demo}/ledger">Demo task ledger</a> (JSON)</li>`
 		: `<li>No public demo task is configured (<code>MADGRIX_PUBLIC_DEMO_TASK_ID</code>).</li>`;
-	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Git4agents (madgrix Worker)</title>
-<style>body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:3rem auto;padding:0 1rem;color:#111}code{background:#f2f2f2;padding:0 .25rem}</style>
-</head><body>
-<h1>Git4agents</h1>
-<p>A governed promotion protocol for autonomous software agents, running on Cloudflare Workers, Durable Objects, Queues, Workflows, Containers and Artifacts. This Worker is <code>madgrix</code>.</p>
-<p>Agents compete on one frozen task in isolated Artifact repositories. Evidence comes from a separate evaluation domain, blind verifiers sign reports, and a single-use exact-state permit lets only the reviewed commit reach canonical history. Every promotion ships a signed bundle you can verify offline.</p>
-<p><a href="/board"><b>◆ Open the trust board</b></a>: three recorded live runs (13-agent crew, cheater quarantined, 3,000-agent claims) drawn as an illustrated repo mall.</p>
-<p><a href="/replay"><b>▶ Watch the replay</b></a>: the recorded live run, step by step, plus the attack scenarios.</p>
-<h2>Open without a token</h2>
-<ul>
-<li><a href="/board"><code>GET /board</code></a> — trust board over recorded live runs</li>
-<li><a href="/replay"><code>GET /replay</code></a> — animated replay of a verified live run</li>
-<li><a href="/health"><code>GET /health</code></a> — liveness</li>
-<li><code>GET /tasks/:id/ledger</code> — a task's hash-chained ledger</li>
-<li><code>GET /tasks/:id/attestation/:permit_id/verify</code> — permit attestation check</li>
-${demoLinks}
-</ul>
-<p>All other routes need a service token; see the API table in the <a href="${escapeHtml(REPO_URL)}">repository README</a>.</p>
-</body></html>`;
-	return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+	const html = renderLanding(demoLinks);
+	return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'" } });
 }
 
 async function route(request: Request, env: Env): Promise<Response> {
@@ -1865,16 +1846,9 @@ async function route(request: Request, env: Env): Promise<Response> {
 			},
 		});
 	}
-	// GET /replay — static, self-contained replay of a recorded live run.
+	// GET /replay — retired; /board replaces it. Permanent redirect keeps old links working.
 	if (request.method === "GET" && parts.length === 1 && parts[0] === "replay") {
-		return new Response(renderReplayPage(), {
-			status: 200,
-			headers: {
-				"content-type": "text/html; charset=utf-8",
-				"content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
-				"cache-control": "public, max-age=300",
-			},
-		});
+		return new Response(null, { status: 301, headers: { location: `/board${url.search}` } });
 	}
 	// POST /module-agents/{load,wake,memory,route} — control plane only.
 	if (request.method === "POST" && parts.length === 2 && parts[0] === "module-agents") {
