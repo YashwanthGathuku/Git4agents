@@ -666,7 +666,13 @@ export async function registerClaim(
 		agent_secret_sha256,
 	};
 	const live = state.claims.filter((c) => c.status === "claimed" || c.status === "active");
-	const reports = live.map((c) => classifyPair(claim, c));
+	// Scale (docs/SCALE.md): a pair whose only finding is "L2 analysis
+	// unavailable" carries no concrete overlap. Storing one such report per
+	// live pair made the authority's single state value grow O(n²) and
+	// capped a task at ~190 claims live. Only pairs with a concrete layer
+	// finding (path, symbol, impact, contract, state) or an amendment are
+	// reported and stored; `pairs_checked` keeps the full count.
+	const reports = live.map((c) => classifyPair(claim, c)).filter(isActionableReport);
 	const s2 = await appendLedger(
 		{
 			...state,
@@ -674,10 +680,17 @@ export async function registerClaim(
 			conflict_reports: [...(state.conflict_reports ?? []), ...reports],
 		},
 		"claim_registered",
-		{ work_id: claim.work_id, agent: claim.agent, risk: reports.map((r) => r.risk) },
+		{ work_id: claim.work_id, agent: claim.agent, risk: reports.map((r) => r.risk), pairs_checked: live.length },
 		ctx,
 	);
 	return { state: s2, claim, reports, agent_secret };
+}
+
+/** A conflict report with a concrete finding on some layer (not merely "L2 unavailable"). */
+export function isActionableReport(r: ConflictReport): boolean {
+	const l = r.layers;
+	if (l.text.length + l.symbol.length + l.impact.length + l.contract.length + l.state.length > 0) return true;
+	return r.risk === "BLOCKED" || r.risk === "RED" || /amended/.test(r.explanation);
 }
 
 /**
