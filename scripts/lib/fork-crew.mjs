@@ -517,6 +517,33 @@ function commitIndex(repo, baseline, commits, record, message) {
 }
 
 /**
+ * Write every crew edit outside `skip` into the index and working tree: a file
+ * one agent changed comes from that agent's commit, a file several agents
+ * changed is their disjoint three-way merge. COMPOSED skips nothing. The
+ * resolution lease skips the conflicted paths, so the authority, not the
+ * resolver, writes everything that was never in conflict.
+ *
+ * @param {string} repo
+ * @param {string} baseline
+ * @param {Map<string, SubCommit[]>} owners
+ * @param {Set<string>} [skip]
+ */
+function applyCleanEdits(repo, baseline, owners, skip = new Set()) {
+	for (const [file, group] of owners) {
+		if (skip.has(file)) continue;
+		mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
+		if (group.length === 1) {
+			git(repo, ["checkout", group[0].sha, "--", file]);
+			continue;
+		}
+		const merged = mergeDisjointEdits(repo, baseline, file, group);
+		if (merged === null) throw new Error(`combine lost a conflict on ${file}`);
+		writeFileSync(path.join(repo, file), merged);
+		git(repo, ["add", "--", file]);
+	}
+}
+
+/**
  * COMPOSED writes one commit whose parents are the baseline and every
  * sub-agent commit. CONFLICTED writes nothing: main stays at the baseline,
  * and the return value is the only conflict object.
@@ -540,17 +567,7 @@ export function combineSubagentBranches(repo, baseline, commits) {
 	}
 	git(repo, ["checkout", "-B", "main", baseline]);
 	git(repo, ["read-tree", baseline]);
-	for (const [file, group] of owners) {
-		mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
-		if (group.length === 1) {
-			git(repo, ["checkout", group[0].sha, "--", file]);
-			continue;
-		}
-		const merged = mergeDisjointEdits(repo, baseline, file, group);
-		if (merged === null) throw new Error(`combine lost a conflict on ${file}`);
-		writeFileSync(path.join(repo, file), merged);
-		git(repo, ["add", "--", file]);
-	}
+	applyCleanEdits(repo, baseline, owners);
 	const record = {
 		parent_fork: true,
 		status: "COMPOSED",
@@ -673,11 +690,25 @@ export async function runCrewOnFork(repo, crew, runSub, verify = verifyFrozenBas
 	return { baseline, commits, theustad, ...combined };
 }
 
+export const RESOLUTION_LEASE_VERSION = "madgrix-resolution-lease/v1";
+
 /**
- * Apply a resolver command to a CONFLICTED crew result. The command sees the
- * baseline tree, `.madgrix/conflict.json`, and `.madgrix/sides/<agent>/`.
- * It does not receive a MADGRIX service token. The commit it produces is a
- * new candidate; this function does not evaluate or promote it.
+ * Apply a resolver command to a CONFLICTED crew result under a resolution
+ * lease (specs/amendments/resolution-lease-v1.md).
+ *
+ * The authority first writes the pre-composed tree itself: the baseline plus
+ * every crew edit that was never in conflict. Only the conflicted paths are
+ * leased to the resolver, and they hold their baseline text. The resolver
+ * reads its inputs from a directory outside the repository
+ * (`MADGRIX_CONFLICT_PATH`, `MADGRIX_SIDES_DIR`), so nothing it was shown is
+ * committed. Afterwards the staged tree may differ from the pre-composed
+ * tree only on leased paths; any other change, including a deleted file, is
+ * refused and the checkout returns to the baseline.
+ *
+ * The resolver does not receive a MADGRIX service token. The commit it
+ * produces is a new candidate; this function does not evaluate or promote it.
+ * The lease bounds WHERE a resolver may write. It does not check that the
+ * leased text keeps each side's intent; that is the job of evaluation.
  *
  * @param {string} repo
  * @param {{ status: string, baseline: string, commits: SubCommit[], conflict: ReturnType<typeof conflictRecord> | null }} crewResult
@@ -688,51 +719,97 @@ export function resolveComposition(repo, crewResult, command) {
 		throw new Error("resolveComposition requires a CONFLICTED result");
 	}
 	if (typeof command !== "string" || command.length === 0) throw new Error("resolver command is empty");
-	git(repo, ["checkout", "-B", "main", crewResult.baseline]);
-	git(repo, ["reset", "--hard", crewResult.baseline]);
-	mkdirSync(path.join(repo, ".madgrix"), { recursive: true });
-	writeFileSync(path.join(repo, CONFLICT_PATH), `${JSON.stringify(crewResult.conflict, null, 2)}\n`);
-	for (const file of crewResult.conflict.files) {
-		for (const side of file.sides) {
-			const dest = path.join(repo, ".madgrix", "sides", side.agent_id, file.path);
-			mkdirSync(path.dirname(dest), { recursive: true });
-			writeFileSync(dest, side.text);
-		}
+	const baseline = crewResult.baseline;
+	const leasedPaths = crewResult.conflict.files.map((file) => file.path);
+	const leased = new Set(leasedPaths);
+
+	git(repo, ["checkout", "-B", "main", baseline]);
+	git(repo, ["reset", "--hard", baseline]);
+	git(repo, ["clean", "-fd"]);
+	// The lease is derived from the crew's commits, not trusted from the record:
+	// a record that names a path the commits do not conflict on (or omits one)
+	// would widen or shrink what the resolver may write.
+	const { owners, conflicts } = classifyEdits(repo, baseline, crewResult.commits);
+	const derived = conflicts.map((conflict) => conflict.path).sort();
+	if (JSON.stringify(derived) !== JSON.stringify([...leasedPaths].sort())) {
+		throw new Error(
+			`conflict record names ${[...leasedPaths].sort().join(", ") || "no paths"}, ` +
+				`but the crew's commits conflict on ${derived.join(", ") || "no paths"}`,
+		);
 	}
-	const result = spawnSync("bash", ["-c", command], {
-		cwd: repo,
-		encoding: "utf8",
-		env: minimalEnv({
-			MADGRIX_CONFLICT_PATH: CONFLICT_PATH,
-			MADGRIX_BASELINE_SHA: crewResult.baseline,
-		}),
-	});
-	if (result.error || (result.status ?? 1) !== 0) {
-		throw new Error(`resolver exited ${result.status ?? "signal"}`);
-	}
-	const dirty = porcelainPaths(git(repo, ["status", "--porcelain", "-uall"]).stdout);
-	if (dirty.length === 0) throw new Error("resolver produced no change");
-	for (const file of crewResult.conflict.files) {
-		let onDisk = "";
-		try {
-			onDisk = readFileSync(path.join(repo, file.path), "utf8");
-		} catch {
-			throw new Error(`resolver left ${file.path} unresolved`);
+	applyCleanEdits(repo, baseline, owners, leased);
+	git(repo, ["add", "-A"]);
+	const precomposedTree = git(repo, ["write-tree"]).stdout.trim();
+
+	const inputs = mkdtempSync(path.join(os.tmpdir(), "madgrix-resolve-"));
+	const sidesDir = path.join(inputs, "sides");
+	try {
+		const conflictFile = path.join(inputs, "conflict.json");
+		writeFileSync(conflictFile, `${JSON.stringify(crewResult.conflict, null, 2)}\n`);
+		for (const file of crewResult.conflict.files) {
+			for (const side of file.sides) {
+				const dest = path.resolve(sidesDir, side.agent_id, file.path);
+				if (!dest.startsWith(`${sidesDir}${path.sep}`)) {
+					throw new Error(`conflict side ${side.agent_id}:${file.path} escapes the resolver input directory`);
+				}
+				mkdirSync(path.dirname(dest), { recursive: true });
+				writeFileSync(dest, side.text);
+			}
 		}
-		if (onDisk.includes("<<<<<<<") || onDisk.includes(">>>>>>>")) {
-			throw new Error(`resolver left conflict markers in ${file.path}`);
+		const result = spawnSync("bash", ["-c", command], {
+			cwd: repo,
+			encoding: "utf8",
+			env: minimalEnv({
+				MADGRIX_CONFLICT_PATH: conflictFile,
+				MADGRIX_SIDES_DIR: sidesDir,
+				MADGRIX_BASELINE_SHA: baseline,
+				MADGRIX_LEASED_PATHS: leasedPaths.join("\n"),
+			}),
+		});
+		if (result.error || (result.status ?? 1) !== 0) {
+			throw new Error(`resolver exited ${result.status ?? "signal"}`);
 		}
-		if (!dirty.includes(file.path)) throw new Error(`resolver left ${file.path} unresolved`);
+		git(repo, ["add", "-A"]);
+		const changed = git(repo, ["diff-index", "--cached", "--name-only", "--no-renames", precomposedTree])
+			.stdout.split("\n")
+			.filter(Boolean);
+		const outside = changed.filter((file) => !leased.has(file));
+		if (outside.length > 0) {
+			throw new Error(`resolver changed ${outside.join(", ")}, outside its lease (${leasedPaths.join(", ")})`);
+		}
+		if (changed.length === 0) throw new Error("resolver produced no change");
+		for (const file of leasedPaths) {
+			let onDisk = "";
+			try {
+				onDisk = readFileSync(path.join(repo, file), "utf8");
+			} catch {
+				throw new Error(`resolver left ${file} unresolved`);
+			}
+			if (onDisk.includes("<<<<<<<") || onDisk.includes(">>>>>>>")) {
+				throw new Error(`resolver left conflict markers in ${file}`);
+			}
+			if (!changed.includes(file)) throw new Error(`resolver left ${file} unresolved`);
+		}
+	} catch (error) {
+		git(repo, ["reset", "--hard", baseline], { allowFailure: true });
+		git(repo, ["clean", "-fd"], { allowFailure: true });
+		throw error;
+	} finally {
+		rmSync(inputs, { recursive: true, force: true });
 	}
 	const record = {
 		parent_fork: true,
 		status: "RESOLVED",
 		resolution: "RESOLVED",
-		overlap: crewResult.conflict.files.map((file) => file.path),
+		overlap: leasedPaths,
 		claims: claimRecord(crewResult.commits),
 		resolved_from: crewResult.conflict.contributing_shas,
+		lease: {
+			format: RESOLUTION_LEASE_VERSION,
+			paths: leasedPaths,
+			precomposed_tree: precomposedTree,
+		},
 	};
-	git(repo, ["add", "-A"]);
 	const sha = commitIndex(
 		repo,
 		crewResult.baseline,

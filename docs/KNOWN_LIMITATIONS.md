@@ -59,6 +59,12 @@ canonical `starter-repo` `main`.
   evaluated before permit/promotion.
 - The promotion Container independently scans for unresolved merge-marker artifacts;
   it does not rely only on the evaluator's statement.
+- A resolver works under a resolution lease (`specs/amendments/resolution-lease-v1.md`):
+  the authority writes all non-conflicting work itself, and a resolution that changes
+  any path outside the conflicted files is refused. The lease bounds where a resolver
+  writes; it does **not** check that a resolution keeps each side's intent. A resolver
+  that keeps one side's text is still accepted at this layer and is judged only by
+  evaluation. The lease is file-level, not hunk-level, and the resolver is not sandboxed.
 - An empty republish used to recover a missed first subscription event is a new SHA and
   must be treated as a new candidate state.
 - TheUstad's competition gate verifies the parent fork is still at the frozen baseline

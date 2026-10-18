@@ -2,15 +2,15 @@
 /**
  * Deterministic resolver for configs/demo-composition.json.
  *
- * It reads the baseline and the structured conflict. It copies each agent's
- * non-overlapping files from that agent's commit, then writes one contract
- * line that keeps both intents. It does not evaluate or promote. A service
- * token in its environment is a hard failure.
+ * Under the resolution lease (specs/amendments/resolution-lease-v1.md) the
+ * authority has already written every file that was not in conflict. This
+ * resolver reads the structured conflict from outside the repository and
+ * writes the one leased path: a contract line that keeps both intents. It does
+ * not evaluate or promote. A service token in its environment is a hard
+ * failure.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 const forbidden = Object.keys(process.env).filter((name) =>
 	/CONTROL_SERVICE_TOKEN|EVALUATION_SERVICE_TOKEN|AGENT_SERVICE_TOKEN|AUTHORITY_SIGNING_KEY/.test(name),
@@ -34,33 +34,9 @@ const blocked = new Set(
 		.filter((filePath) => typeof filePath === "string"),
 );
 
-/**
- * @param {string[]} args
- */
-function git(args) {
-	const result = spawnSync("git", args, { encoding: "utf8" });
-	if ((result.status ?? 1) !== 0) {
-		console.error((result.stderr || result.stdout || "git failed").trim());
-		process.exit(result.status ?? 1);
-	}
-	return result.stdout ?? "";
-}
-
-for (const agent of conflict.agents ?? []) {
-	if (typeof agent.commit !== "string" || agent.commit === "") {
-		console.error("conflict agent has no commit");
-		process.exit(1);
-	}
-	const names = git(["diff", "--name-only", baseline, agent.commit]).split("\n").filter(Boolean);
-	for (const name of names) {
-		if (blocked.has(name)) continue;
-		mkdirSync(path.dirname(name), { recursive: true });
-		git(["checkout", agent.commit, "--", name]);
-	}
-}
-
 if (!blocked.has("src/contract.js")) {
 	console.error("demo resolver expected a conflict on src/contract.js");
 	process.exit(1);
 }
+mkdirSync("src", { recursive: true });
 writeFileSync("src/contract.js", 'export const label = "api+ui";\n');
