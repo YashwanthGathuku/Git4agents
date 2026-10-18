@@ -2,7 +2,7 @@
 
 **The trust layer for agent-written code.**
 
-[![tests](https://img.shields.io/badge/tests-446%20passing-2ea44f)](test)
+[![tests](https://img.shields.io/badge/tests-455%20passing-2ea44f)](test)
 [![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://madgrix.ygathuku96.workers.dev)
 
@@ -352,7 +352,7 @@ The old `/replay` page is retired and 301-redirects to `/board`. Simulated attac
 
 | Evidence | Result | Where |
 |---|---|---|
-| Test suite | **446 passing** | `npm test` |
+| Test suite | **455 passing** | `npm test` |
 | Type checking | available | `npm run typecheck` |
 | Attack lab | **26/26 blocked, 0 unauthorized promotions** | `npm run attack:lab` |
 | Offline verification | signed bundles end in **VERIFIED**; tampered bundle ends **NOT VERIFIED** | `npm run verify -- --trust-key keys/authority.pub <bundle>` |
