@@ -415,10 +415,51 @@ export interface PromotionReservation {
  */
 export type CompositionStatus = "PENDING" | "COMPOSING" | "COMPOSED" | "CONFLICTED" | "RESOLVING" | "RESOLVED";
 
+/**
+ * One conflicted region of a two-sided file conflict (Conflict Capsule v2,
+ * specs/amendments/governed-resolution-v1.md). Digests only: the region's
+ * text stays with the runner.
+ */
+export interface CompositionHunk {
+	index: number;
+	base_sha256: string;
+	sides: Array<{ agent_id: string; sha256: string }>;
+}
+
 export interface CompositionFile {
 	path: string;
 	classification: "textual-line-overlap";
 	sides: Array<{ agent_id: string; role: string; intent: string; sha: string; excerpt: string }>;
+	/** Present when the file is leased by hunk; absent for a whole-file lease. */
+	hunks?: CompositionHunk[];
+}
+
+/** A witness gate verdict (specs/amendments/governed-resolution-v1.md §3). */
+export type WitnessVerdict = "ADMIT" | "REFUSE" | "REVIEW";
+
+/**
+ * The control plane's witness check of one candidate: which frozen manifest
+ * it ran, the report's digest, its verdict, and — for REVIEW only — who
+ * cleared the review. REFUSE is never recordable.
+ */
+export interface WitnessCheck {
+	/** Null when the crew declared no witnesses (every required side is then UNWITNESSED). */
+	witness_manifest_sha256: string | null;
+	witness_report_sha256: string;
+	verdict: WitnessVerdict;
+	review_cleared_by?: string | null;
+}
+
+/** How a RESOLVED candidate was produced, bound to the conflict it answers. */
+export interface CompositionResolution {
+	format: "madgrix-resolution/v1";
+	capsule_id: string;
+	resolver_id: string;
+	rung: "structured" | "replay" | "command";
+	/** Dual-order replay only: whether the two orders agreed byte-for-byte or only on every witness. */
+	order_agreement?: "identical" | "behavioral" | null;
+	lease: { paths: string[]; precomposed_tree: string };
+	witness: WitnessCheck;
 }
 
 export interface CompositionAgent {
@@ -439,6 +480,17 @@ export interface CompositionRecord {
 	files: CompositionFile[];
 	/** Set only for COMPOSED and RESOLVED. Null for every other state. */
 	candidate_sha: string | null;
+	/** Digest of the crew's frozen witness manifest, fixed before any resolver runs. */
+	witness_manifest_sha256?: string | null;
+	/**
+	 * Conflict Capsule v2 id. The authority computes it when CONFLICTED is
+	 * recorded; RESOLVED keeps it and must answer it.
+	 */
+	capsule_id?: string | null;
+	/** RESOLVED only: required, bound to capsule_id. */
+	resolution?: CompositionResolution | null;
+	/** COMPOSED only: required when member claims were RED or BLOCKED. */
+	witness_check?: WitnessCheck | null;
 }
 
 /**

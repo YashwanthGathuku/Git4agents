@@ -22,6 +22,8 @@ import { sha256Hex } from "../src/lib/canonical.ts";
 import { createAuthority, recordComposition, registerClaim } from "../src/lib/task-state.ts";
 import { buildWorkGraph } from "../src/lib/work-graph.ts";
 import { authorityComposition, loadForkCrew, resolveComposition, runCrewOnFork } from "./lib/fork-crew.mjs";
+import { resolutionRecord } from "./lib/resolve-ladder.mjs";
+import { freezeWitnesses, loadWitnesses, witnessReport } from "./lib/witness.mjs";
 import { renderWorkGraphPage } from "../src/worker/work-graph-page.ts";
 
 /**
@@ -101,6 +103,9 @@ try {
 	if (conflicted.status !== "CONFLICTED" || conflicted.sha !== null) {
 		throw new Error(`expected CONFLICTED with no SHA, got ${conflicted.status} ${conflicted.sha}`);
 	}
+	const witnesses = loadWitnesses(demoConfig, crew);
+	if (!witnesses) throw new Error("demo crew declares no witnesses");
+	const frozen = freezeWitnesses(repo, conflicted.baseline, conflicted.commits, witnesses);
 	const resolved = resolveComposition(repo, conflicted, `node ${JSON.stringify(resolver)}`);
 	if (resolved.status !== "RESOLVED") throw new Error(`expected RESOLVED, got ${resolved.status}`);
 	if (conflicted.commits.some((commit) => commit.sha === resolved.sha)) {
@@ -164,6 +169,7 @@ try {
 		baseline: conflicted.baseline,
 		commits,
 		conflict: conflicted.conflict,
+		witness_manifest_sha256: witnesses.sha256,
 	};
 	state = await recordComposition(
 		state,
@@ -177,9 +183,16 @@ try {
 			"contender-demo": { ...contender, latest_commit: resolved.sha },
 		},
 	};
+	const capsuleId = /** @type {string} */ (state.composition?.capsule_id);
+	const witness = witnessReport(repo, resolved.sha, witnesses, frozen, { requiredSides: ["sub-api", "sub-ui"], capsuleId });
+	if (witness.verdict !== "ADMIT") throw new Error(`demo resolution was not admitted: ${witness.report.reasons.join("; ")}`);
+	const resolution = resolutionRecord(
+		{ sha: resolved.sha, rung: resolved.resolver.rung, resolver_id: resolved.resolver.id, lease: resolved.lease, witness },
+		{ capsuleId, witnessManifestSha256: witnesses.sha256 },
+	);
 	state = await recordComposition(
 		state,
-		authorityComposition({ ...compositionInput, status: "RESOLVED", sha: resolved.sha }),
+		authorityComposition({ ...compositionInput, status: "RESOLVED", sha: resolved.sha, resolution }),
 		ctx,
 	);
 	const resolvedHtml = renderWorkGraphPage(state, { fixtureBanner: BANNER, graph: buildWorkGraph(state) });

@@ -34,6 +34,7 @@ import type { AuthorityState, CompositionRecord, EvaluationBundle, PermitRecord,
 import { quarantineDeterminationPayload } from "../src/lib/verifier-keys.ts";
 import { buildWorkGraph } from "../src/lib/work-graph.ts";
 import { worker } from "./helpers/worker-harness.ts";
+import { resolutionFor } from "./helpers/resolution.ts";
 
 const BASELINE = "base123";
 const OLD = "old-sha";
@@ -416,7 +417,14 @@ describe("P0-1 exact composition candidate", () => {
 				status === "RESOLVING"
 					? composition({ status, candidate_sha: null })
 					: composition({ status, candidate_sha: null, contributing_shas: [], agents: [], files: [] });
-			const open = await recordComposition(await accepted(ctx, OLD), input, ctx);
+			const base = await accepted(ctx, OLD);
+			const open = await recordComposition(
+				status === "RESOLVING"
+					? await recordComposition(base, composition({ status: "CONFLICTED", candidate_sha: null }), ctx)
+					: base,
+				input,
+				ctx,
+			);
 			assert.equal(promotableCompositionSha(open.composition), null);
 			const openPermit = await issuePermit(open, OLD, "acme/api", BASELINE, ctx);
 			assert.equal(openPermit.outcome, "UNRESOLVED_CONFLICT");
@@ -426,8 +434,8 @@ describe("P0-1 exact composition candidate", () => {
 
 	it("RESOLVED admits only the resolver SHA", async () => {
 		const ctx = makeCtx();
-		let state = await accepted(ctx, OLD);
-		state = await recordComposition(state, composition({ status: "RESOLVED", candidate_sha: RESOLVED }), ctx);
+		let state = await recordComposition(await accepted(ctx, OLD), composition({ status: "CONFLICTED", candidate_sha: null }), ctx);
+		state = await recordComposition(state, composition({ status: "RESOLVED", candidate_sha: RESOLVED, resolution: resolutionFor(state) }), ctx);
 		assert.equal(buildWorkGraph(state).candidate_sha, RESOLVED);
 		const oldPermit = await issuePermit(state, OLD, "acme/api", BASELINE, ctx);
 		assert.equal(oldPermit.outcome, "UNRESOLVED_CONFLICT");

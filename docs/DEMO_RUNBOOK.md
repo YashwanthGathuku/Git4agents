@@ -53,3 +53,37 @@ MADGRIX checks that manifest itself: ids, roles, and bounded paths. `fleet valid
 The sibling live command that does not call `fleet` sets `MADGRIX_AGENT_IDS`. It is written in `docs/CLOUDFLARE_LIVE_READINESS.md`. It was not run. Success still requires a real Artifacts push through the queue. A green local test is not that result.
 
 On 2026-10-06 the readiness session observed `GET https://madgrix.ygathuku96.workers.dev/` → `404` `{"error":"not_found","path":"/"}`. That response does not name a SHA. It is **NOT VERIFIED** as a result for this tree. Nothing here is **TESTED ON CLOUDFLARE**.
+
+## Governed resolution (2026-10-18)
+
+Local, no Cloudflare account:
+
+```
+node --test test/governed-resolution-runner.test.ts test/governed-resolution-authority.test.ts test/resolve-lease.test.ts
+node scripts/bench-resolution.mjs        # needs commit ee421f0 in history; Mergiraf optional
+```
+
+Live path — **NOT RUN.** Steps for a resolved crew on a deployed Worker:
+
+1. Use a crew config whose sub-agents declare `witnesses` (see
+   `configs/demo-composition.json` and `configs/witnesses/demo/`). Witnesses are
+   frozen when the runner loads the config.
+2. Set `MADGRIX_FORK_CREW_CONFIG` to that config and pick the resolver:
+   - `MADGRIX_RESOLVE_LADDER=1` runs Mergiraf (if installed on the runner host),
+     then `MADGRIX_REPLAYER` in both orders. For the LLM replayer:
+     `MADGRIX_REPLAYER="node scripts/resolvers/llm-replayer.mjs"`,
+     `LLM_PROVIDER=anthropic|workers-ai`, `LLM_MODEL=<model>`, and
+     `ANTHROPIC_API_KEY`, or `WORKERS_AI_ACCOUNT_ID` + `WORKERS_AI_API_TOKEN`
+     (a token scoped to Workers AI only). No MADGRIX service token reaches the
+     resolver or the replayer.
+   - or `MADGRIX_RESOLVER_COMMAND=<command>` for a person's resolver, held to the
+     same lease and witnesses.
+   - `MADGRIX_REVIEW_CLEARED_BY="<name>: <reason>"` clears a REVIEW verdict
+     (an unwitnessed side) only; a REFUSE is never cleared.
+3. `npm run live:e2e`. The parent posts CONFLICTED, then RESOLVED, with the
+   control token; evaluation, verdict, permit and promotion run as before.
+4. `npm run verify -- --trust-key keys/authority.pub .madgrix-live/promotion.bundle`
+   prints the eleventh line, `resolution ...... CAPSULE <id> · <rung> · witnesses ADMIT`.
+
+A crew that merges cleanly but breaks a witnessed intent ends as
+`SEMANTIC_CONFLICT`: nothing is pushed or recorded.

@@ -38,6 +38,7 @@ import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { verifyLedgerChain } from "./ledger.ts";
 import { buildPermitId } from "./permit.ts";
 import type { LedgerEntry } from "./types.ts";
+import type { ResolutionPayload } from "./resolution-authority.ts";
 
 /* ------------------------------------------------------------------ */
 /* in-toto statement                                                   */
@@ -277,6 +278,13 @@ export interface PromotionBundle {
 	 * has pinned and verifies every signature with the pinned key.
 	 */
 	authority_pubkey_der_hex: string;
+	/**
+	 * Present when the promoted candidate is a governed resolution
+	 * (specs/amendments/governed-resolution-v1.md §6): the exact payload whose
+	 * SHA-256 the signed ledger records as `resolution_recorded`. Not signed on
+	 * its own; bound through that ledger entry.
+	 */
+	resolution?: ResolutionPayload;
 }
 
 export interface VerifyLine {
@@ -451,6 +459,32 @@ export async function verifyBundle(
 		).length;
 		if (recorded === 1) lines.push({ label: "ledger chain", status: "OK" });
 		else fail("ledger chain", `the signed ledger records this promotion ${recorded} times (must be exactly once)`);
+	}
+
+	// 11. resolution — a governed resolution is bound to the conflict capsule
+	// it answers through the signed ledger; a bundle cannot drop or alter it.
+	const recordedResolutions = Array.isArray(bundle.ledger?.entries)
+		? bundle.ledger.entries.filter((e) => e.kind === "resolution_recorded")
+		: [];
+	if (bundle.resolution === undefined || bundle.resolution === null) {
+		if (recordedResolutions.length === 0) lines.push({ label: "resolution", status: "NONE (not a resolved candidate)" });
+		else fail("resolution", "the signed ledger records a resolution, but the bundle carries none");
+	} else {
+		const r = bundle.resolution;
+		const hash = await sha256Hex(canonicalJson(r));
+		const matches = recordedResolutions.filter((e) => e.payload_hash === hash).length;
+		if (matches !== 1) {
+			fail("resolution", `the bundle's resolution is recorded ${matches} times in the signed ledger (must be exactly once)`);
+		} else if (r.candidate_sha !== bundle.ship.commit) {
+			fail("resolution", "the bundle's resolution names another candidate than the promoted commit");
+		} else {
+			const w = r.resolution?.witness;
+			const verdict = w?.verdict === "REVIEW" ? `REVIEW cleared by ${w.review_cleared_by}` : w?.verdict;
+			lines.push({
+				label: "resolution",
+				status: `CAPSULE ${String(r.resolution?.capsule_id).slice(0, 12)} · ${r.resolution?.rung} · witnesses ${verdict}`,
+			});
+		}
 	}
 
 	return { lines, verified: lines.every((l) => l.status !== "FAIL") };

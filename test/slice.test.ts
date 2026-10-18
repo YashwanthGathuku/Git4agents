@@ -45,7 +45,7 @@ describe("vertical slice (quiet)", () => {
 		assert.equal(verified, true);
 		assert.deepEqual(
 			lines.map((l) => l.status),
-			["OK", "OK", "OK", "PASSED", "OK", "OK", "PINNED", "VALID", "RECOMPUTED FROM BOUND FIELDS", "OK"],
+			["OK", "OK", "OK", "PASSED", "OK", "OK", "PINNED", "VALID", "RECOMPUTED FROM BOUND FIELDS", "OK", "NONE (not a resolved candidate)"],
 		);
 		assert.equal(r.verified, true);
 	});

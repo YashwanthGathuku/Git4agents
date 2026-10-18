@@ -20,6 +20,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +28,14 @@ import { fileURLToPath } from "node:url";
 
 import { loadContenderIds } from "./agentfleet-slots.mjs";
 import { minimalEnv } from "./child-env.mjs";
+
+/**
+ * SHA-256 of a UTF-8 string, hex.
+ * @param {string} text
+ */
+export function sha256Text(text) {
+	return createHash("sha256").update(text, "utf8").digest("hex");
+}
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -376,6 +385,143 @@ export function threeWayMerge(base, ours, theirs, spawn = spawnSync) {
 	}
 }
 
+/** Conflict-marker length used when splitting a two-sided conflict into hunks. */
+const HUNK_MARKER_SIZE = 32;
+
+/**
+ * @param {string} text
+ * @returns {string[]} lines, each keeping its "\n"
+ */
+function splitLines(text) {
+	return text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+}
+
+/**
+ * Split a two-sided textual conflict into hunks: the clean `segments` the
+ * three-way merge settled, and between each pair of segments one `hunk`
+ * holding the base, ours and theirs text of that region
+ * (`segments.length === hunks.length + 1`). Interleaving the segments with any
+ * choice of hunk texts rebuilds a full file.
+ *
+ * Returns null — the caller then leases the whole file — when the split is not
+ * exact: an input already contains a line that looks like one of the markers,
+ * a non-empty input lacks a final newline, or git's output does not parse.
+ *
+ * @param {string} base
+ * @param {string} ours
+ * @param {string} theirs
+ * @param {typeof spawnSync} [spawn]
+ * @returns {{ segments: string[], hunks: Array<{ base: string, ours: string, theirs: string }> } | null}
+ */
+export function conflictHunks(base, ours, theirs, spawn = spawnSync) {
+	const open = "<".repeat(HUNK_MARKER_SIZE);
+	const mid = "|".repeat(HUNK_MARKER_SIZE);
+	const sep = "=".repeat(HUNK_MARKER_SIZE);
+	const close = ">".repeat(HUNK_MARKER_SIZE);
+	const markers = [open, mid, sep, close];
+	for (const text of [base, ours, theirs]) {
+		if (text.length > 0 && !text.endsWith("\n")) return null;
+		if (splitLines(text).some((line) => markers.some((m) => line.startsWith(m)))) return null;
+	}
+	const dir = mkdtempSync(path.join(os.tmpdir(), "madgrix-hunks-"));
+	let output = "";
+	try {
+		writeFileSync(path.join(dir, "base"), base);
+		writeFileSync(path.join(dir, "ours"), ours);
+		writeFileSync(path.join(dir, "theirs"), theirs);
+		const result = spawn(
+			"git",
+			["merge-file", "-p", "--diff3", `--marker-size=${HUNK_MARKER_SIZE}`, "-L", "ours", "-L", "base", "-L", "theirs", "ours", "base", "theirs"],
+			{ cwd: dir, encoding: "utf8", env: minimalEnv() },
+		);
+		if (result.error || (result.status ?? -1) < 0) return null;
+		output = result.stdout ?? "";
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+	/** @param {string} line @param {string} marker */
+	const is = (line, marker) => {
+		const bare = line.endsWith("\n") ? line.slice(0, -1) : line;
+		return bare === marker || bare.startsWith(`${marker} `);
+	};
+	/** @type {string[]} */
+	const segments = [""];
+	/** @type {Array<{ base: string, ours: string, theirs: string }>} */
+	const hunks = [];
+	/** @type {"clean" | "ours" | "base" | "theirs"} */
+	let state = "clean";
+	let current = { base: "", ours: "", theirs: "" };
+	for (const line of splitLines(output)) {
+		const marker = markers.find((m) => is(line, m));
+		if (state === "clean") {
+			if (marker === open) {
+				state = "ours";
+				current = { base: "", ours: "", theirs: "" };
+			} else if (marker !== undefined) return null;
+			else segments[segments.length - 1] += line;
+		} else if (state === "ours") {
+			if (marker === mid) state = "base";
+			else if (marker !== undefined) return null;
+			else current.ours += line;
+		} else if (state === "base") {
+			if (marker === sep) state = "theirs";
+			else if (marker !== undefined) return null;
+			else current.base += line;
+		} else if (marker === close) {
+			hunks.push(current);
+			segments.push("");
+			state = "clean";
+		} else if (marker !== undefined) return null;
+		else current.theirs += line;
+	}
+	if (state !== "clean") return null;
+	return { segments, hunks };
+}
+
+/**
+ * Interleave clean segments with one text per hunk.
+ * @param {string[]} segments
+ * @param {string[]} fills
+ */
+export function fillTemplate(segments, fills) {
+	if (fills.length !== segments.length - 1) throw new Error("fillTemplate: one fill per hunk");
+	return segments.reduce((text, segment, i) => text + segment + (i < fills.length ? fills[i] : ""), "");
+}
+
+/**
+ * The hunk texts of `text` when it is the clean `segments`, in order and
+ * unchanged, with any text between them; null when a clean segment was
+ * changed, dropped or moved. Leftmost placement is used, which finds a match
+ * whenever one exists.
+ *
+ * @param {string[]} segments
+ * @param {string} text
+ * @returns {string[] | null}
+ */
+export function matchTemplate(segments, text) {
+	if (segments.length === 0) return null;
+	if (!text.startsWith(segments[0])) return null;
+	if (segments.length === 1) return text === segments[0] ? [] : null;
+	/** @type {string[]} */
+	const fills = [];
+	let pos = segments[0].length;
+	for (let i = 1; i < segments.length; i++) {
+		const segment = segments[i];
+		if (i === segments.length - 1) {
+			const start = text.length - segment.length;
+			if (start < pos || !text.endsWith(segment)) return null;
+			fills.push(text.slice(pos, start));
+			pos = text.length;
+		} else {
+			const at = text.indexOf(segment, pos);
+			if (at < 0) return null;
+			fills.push(text.slice(pos, at));
+			pos = at + segment.length;
+		}
+	}
+	return fills;
+}
+
 /**
  * @typedef {{ id: string, role: string, intent: string, paths: string[], sha: string, claim_work_id?: string | null, files?: string[] }} SubCommit
  */
@@ -432,7 +578,11 @@ function classifyEdits(repo, baseline, commits) {
  * receives that token, and the resolver does not receive it either.
  * Conflict side text is shortened to the display excerpt.
  *
- * @param {{ status: "COMPOSED" | "CONFLICTED" | "RESOLVED", baseline: string, commits: SubCommit[], conflict: { files: Array<{ path: string, classification: string, sides: Array<{ agent_id: string, role: string, intent: string, sha: string, text?: string }> }> } | null, sha: string | null, contender_id: string }} input
+ * Hunk records carry digests only; side bodies stay with the runner.
+ * `witness_manifest_sha256`, `resolution` and `witness_check` are passed
+ * through when the caller has them (specs/amendments/governed-resolution-v1.md).
+ *
+ * @param {{ status: "COMPOSED" | "CONFLICTED" | "RESOLVED", baseline: string, commits: SubCommit[], conflict: { files: Array<{ path: string, classification: string, sides: Array<{ agent_id: string, role: string, intent: string, sha: string, text?: string }>, hunks?: Array<{ index: number, base: string, sides: Array<{ agent_id: string, text: string }> }> | null }> } | null, sha: string | null, contender_id: string, witness_manifest_sha256?: string | null, resolution?: import("../../src/lib/types.ts").CompositionResolution | null, witness_check?: import("../../src/lib/types.ts").WitnessCheck | null }} input
  */
 export function authorityComposition(input) {
 	const files = (input.conflict?.files ?? []).map((file) => ({
@@ -445,8 +595,23 @@ export function authorityComposition(input) {
 			sha: side.sha,
 			excerpt: typeof side.text === "string" ? side.text.slice(0, 400) : "",
 		})),
+		...(Array.isArray(file.hunks) && file.hunks.length > 0
+			? {
+					hunks: file.hunks.map((hunk) => ({
+						index: hunk.index,
+						base_sha256: sha256Text(hunk.base),
+						sides: hunk.sides.map((side) => ({ agent_id: side.agent_id, sha256: sha256Text(side.text) })),
+					})),
+				}
+			: {}),
 	}));
+	const extras = {
+		...(input.witness_manifest_sha256 ? { witness_manifest_sha256: input.witness_manifest_sha256 } : {}),
+		...(input.status === "RESOLVED" && input.resolution ? { resolution: input.resolution } : {}),
+		...(input.status === "COMPOSED" && input.witness_check ? { witness_check: input.witness_check } : {}),
+	};
 	return {
+		...extras,
 		status: input.status,
 		contender_id: input.contender_id,
 		baseline: input.baseline,
@@ -478,18 +643,50 @@ function conflictRecord(repo, baseline, commits, conflicts) {
 		baseline,
 		agents: claimRecord(commits),
 		contributing_shas: commits.map((commit) => commit.sha),
-		files: conflicts.map((conflict) => ({
-			path: conflict.path,
-			classification: "textual-line-overlap",
-			sides: conflict.group.map((owner) => ({
+		files: conflicts.map((conflict) => {
+			const base = blobText(repo, baseline, conflict.path);
+			const sides = conflict.group.map((owner) => ({
 				agent_id: owner.id,
 				role: owner.role,
 				intent: owner.intent,
 				sha: owner.sha,
 				text: blobText(repo, owner.sha, conflict.path),
-			})),
-		})),
+			}));
+			// Two sides split into hunks; three or more sides on one file, or a
+			// split that is not exact, lease the whole file (hunks: null).
+			const split = sides.length === 2 ? conflictHunks(base, sides[0].text, sides[1].text) : null;
+			const hunked = split !== null && split.hunks.length > 0;
+			return {
+				path: conflict.path,
+				classification: "textual-line-overlap",
+				base,
+				sides,
+				segments: hunked ? split.segments : null,
+				hunks: hunked
+					? split.hunks.map((hunk, index) => ({
+							index,
+							base: hunk.base,
+							sides: [
+								{ agent_id: sides[0].agent_id, text: hunk.ours },
+								{ agent_id: sides[1].agent_id, text: hunk.theirs },
+							],
+						}))
+					: null,
+			};
+		}),
 	};
+}
+
+/**
+ * The text the authority leaves in a leased file before the resolver runs:
+ * every clean region merged, each conflicted hunk at its baseline text. A
+ * whole-file lease leaves the baseline file.
+ *
+ * @param {ReturnType<typeof conflictRecord>["files"][number]} file
+ */
+function precomposedText(file) {
+	if (file.segments === null || file.hunks === null) return file.base;
+	return fillTemplate(file.segments, file.hunks.map((hunk) => hunk.base));
 }
 
 /**
@@ -710,15 +907,33 @@ export const RESOLUTION_LEASE_VERSION = "madgrix-resolution-lease/v1";
  * The lease bounds WHERE a resolver may write. It does not check that the
  * leased text keeps each side's intent; that is the job of evaluation.
  *
+ * Within a leased file, a two-sided conflict is leased by hunk: the file
+ * holds every clean region already merged and each conflicted hunk at its
+ * baseline text, and the resolved file must keep those clean regions, in
+ * order and unchanged. Three or more sides on one file lease the whole file.
+ *
+ * `opts.env` adds variables to the resolver's environment (a replayer
+ * command, a model API key). A name that looks like a service token or a
+ * Cloudflare credential is refused, and the lease's own MADGRIX_* inputs
+ * cannot be overridden. `opts.resolver` names the resolver in the record.
+ *
  * @param {string} repo
  * @param {{ status: string, baseline: string, commits: SubCommit[], conflict: ReturnType<typeof conflictRecord> | null }} crewResult
  * @param {string} command
+ * @param {{ env?: Record<string, string>, resolver?: { id: string, rung: string, order?: string | null } }} [opts]
  */
-export function resolveComposition(repo, crewResult, command) {
+export function resolveComposition(repo, crewResult, command, opts = {}) {
 	if (crewResult.status !== "CONFLICTED" || crewResult.conflict === null) {
 		throw new Error("resolveComposition requires a CONFLICTED result");
 	}
 	if (typeof command !== "string" || command.length === 0) throw new Error("resolver command is empty");
+	const extraEnv = opts.env ?? {};
+	for (const name of Object.keys(extraEnv)) {
+		if (FORBIDDEN_RESOLVER_ENV.test(name) || LEASE_ENV.has(name)) {
+			throw new Error(`resolver environment may not set ${name}`);
+		}
+	}
+	const resolver = opts.resolver ?? { id: "command", rung: "command", order: null };
 	const baseline = crewResult.baseline;
 	const leasedPaths = crewResult.conflict.files.map((file) => file.path);
 	const leased = new Set(leasedPaths);
@@ -728,7 +943,8 @@ export function resolveComposition(repo, crewResult, command) {
 	git(repo, ["clean", "-fd"]);
 	// The lease is derived from the crew's commits, not trusted from the record:
 	// a record that names a path the commits do not conflict on (or omits one)
-	// would widen or shrink what the resolver may write.
+	// would widen or shrink what the resolver may write. The hunks are derived
+	// the same way.
 	const { owners, conflicts } = classifyEdits(repo, baseline, crewResult.commits);
 	const derived = conflicts.map((conflict) => conflict.path).sort();
 	if (JSON.stringify(derived) !== JSON.stringify([...leasedPaths].sort())) {
@@ -737,16 +953,26 @@ export function resolveComposition(repo, crewResult, command) {
 				`but the crew's commits conflict on ${derived.join(", ") || "no paths"}`,
 		);
 	}
+	const conflict = conflictRecord(repo, baseline, crewResult.commits, conflicts);
 	applyCleanEdits(repo, baseline, owners, leased);
+	for (const file of conflict.files) {
+		const full = path.join(repo, file.path);
+		mkdirSync(path.dirname(full), { recursive: true });
+		const text = precomposedText(file);
+		if (text === "" && file.base === "" && file.segments === null) rmSync(full, { force: true });
+		else writeFileSync(full, text);
+	}
 	git(repo, ["add", "-A"]);
 	const precomposedTree = git(repo, ["write-tree"]).stdout.trim();
 
+	/** @type {Array<{ path: string, index: number, base_sha256: string, resolution_sha256: string }>} */
+	const resolvedHunks = [];
 	const inputs = mkdtempSync(path.join(os.tmpdir(), "madgrix-resolve-"));
 	const sidesDir = path.join(inputs, "sides");
 	try {
 		const conflictFile = path.join(inputs, "conflict.json");
-		writeFileSync(conflictFile, `${JSON.stringify(crewResult.conflict, null, 2)}\n`);
-		for (const file of crewResult.conflict.files) {
+		writeFileSync(conflictFile, `${JSON.stringify(conflict, null, 2)}\n`);
+		for (const file of conflict.files) {
 			for (const side of file.sides) {
 				const dest = path.resolve(sidesDir, side.agent_id, file.path);
 				if (!dest.startsWith(`${sidesDir}${path.sep}`)) {
@@ -760,6 +986,7 @@ export function resolveComposition(repo, crewResult, command) {
 			cwd: repo,
 			encoding: "utf8",
 			env: minimalEnv({
+				...extraEnv,
 				MADGRIX_CONFLICT_PATH: conflictFile,
 				MADGRIX_SIDES_DIR: sidesDir,
 				MADGRIX_BASELINE_SHA: baseline,
@@ -767,7 +994,8 @@ export function resolveComposition(repo, crewResult, command) {
 			}),
 		});
 		if (result.error || (result.status ?? 1) !== 0) {
-			throw new Error(`resolver exited ${result.status ?? "signal"}`);
+			const detail = (result.stderr ?? "").trim().split("\n").slice(-1)[0];
+			throw new Error(`resolver exited ${result.status ?? "signal"}${detail ? `: ${detail}` : ""}`);
 		}
 		git(repo, ["add", "-A"]);
 		const changed = git(repo, ["diff-index", "--cached", "--name-only", "--no-renames", precomposedTree])
@@ -778,17 +1006,31 @@ export function resolveComposition(repo, crewResult, command) {
 			throw new Error(`resolver changed ${outside.join(", ")}, outside its lease (${leasedPaths.join(", ")})`);
 		}
 		if (changed.length === 0) throw new Error("resolver produced no change");
-		for (const file of leasedPaths) {
+		for (const file of conflict.files) {
 			let onDisk = "";
 			try {
-				onDisk = readFileSync(path.join(repo, file), "utf8");
+				onDisk = readFileSync(path.join(repo, file.path), "utf8");
 			} catch {
-				throw new Error(`resolver left ${file} unresolved`);
+				throw new Error(`resolver left ${file.path} unresolved`);
 			}
 			if (onDisk.includes("<<<<<<<") || onDisk.includes(">>>>>>>")) {
-				throw new Error(`resolver left conflict markers in ${file}`);
+				throw new Error(`resolver left conflict markers in ${file.path}`);
 			}
-			if (!changed.includes(file)) throw new Error(`resolver left ${file} unresolved`);
+			if (!changed.includes(file.path)) throw new Error(`resolver left ${file.path} unresolved`);
+			if (file.segments !== null && file.hunks !== null) {
+				const fills = matchTemplate(file.segments, onDisk);
+				if (fills === null) {
+					throw new Error(`resolver changed clean lines of ${file.path} outside its leased hunks`);
+				}
+				fills.forEach((fill, index) => {
+					resolvedHunks.push({
+						path: file.path,
+						index,
+						base_sha256: sha256Text(file.hunks?.[index]?.base ?? ""),
+						resolution_sha256: sha256Text(fill),
+					});
+				});
+			}
 		}
 	} catch (error) {
 		git(repo, ["reset", "--hard", baseline], { allowFailure: true });
@@ -797,6 +1039,12 @@ export function resolveComposition(repo, crewResult, command) {
 	} finally {
 		rmSync(inputs, { recursive: true, force: true });
 	}
+	const lease = {
+		format: RESOLUTION_LEASE_VERSION,
+		paths: leasedPaths,
+		hunked_paths: conflict.files.filter((file) => file.hunks !== null).map((file) => file.path),
+		precomposed_tree: precomposedTree,
+	};
 	const record = {
 		parent_fork: true,
 		status: "RESOLVED",
@@ -804,21 +1052,30 @@ export function resolveComposition(repo, crewResult, command) {
 		overlap: leasedPaths,
 		claims: claimRecord(crewResult.commits),
 		resolved_from: crewResult.conflict.contributing_shas,
-		lease: {
-			format: RESOLUTION_LEASE_VERSION,
-			paths: leasedPaths,
-			precomposed_tree: precomposedTree,
-		},
+		lease,
+		resolver: { id: resolver.id, rung: resolver.rung, order: resolver.order ?? null },
 	};
 	const sha = commitIndex(
 		repo,
 		crewResult.baseline,
 		crewResult.commits,
 		record,
-		`MADGRIX resolve\n\n${crewResult.commits.map((commit) => `${commit.id}: ${commit.intent}`).join("\n")}`,
+		`MADGRIX resolve (${resolver.rung})\n\n${crewResult.commits.map((commit) => `${commit.id}: ${commit.intent}`).join("\n")}`,
 	);
-	return { status: /** @type {const} */ ("RESOLVED"), sha, resolution: /** @type {const} */ ("RESOLVED"), recordPath: RECORD_PATH };
+	return {
+		status: /** @type {const} */ ("RESOLVED"),
+		sha,
+		resolution: /** @type {const} */ ("RESOLVED"),
+		recordPath: RECORD_PATH,
+		lease: { ...lease, hunks: resolvedHunks },
+		resolver: record.resolver,
+	};
 }
+
+/** Names a resolver environment may never carry. */
+const FORBIDDEN_RESOLVER_ENV = /SERVICE_TOKEN|AUTHORITY_SIGNING_KEY|CLOUDFLARE|^CF_/i;
+/** The lease's own inputs; a caller cannot override them. */
+const LEASE_ENV = new Set(["MADGRIX_CONFLICT_PATH", "MADGRIX_SIDES_DIR", "MADGRIX_BASELINE_SHA", "MADGRIX_LEASED_PATHS"]);
 
 /**
  * @param {ReturnType<typeof loadForkCrew>["subs"][number]} sub

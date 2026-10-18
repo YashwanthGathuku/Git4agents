@@ -19,6 +19,7 @@ import {
 import type { AuthorityState, CompositionRecord, EvaluationBundle } from "../src/lib/types.ts";
 import { buildWorkGraph } from "../src/lib/work-graph.ts";
 import { FIXED_TREE, TOKENS, call, makeHarness, push, worker } from "./helpers/worker-harness.ts";
+import { resolutionFor } from "./helpers/resolution.ts";
 
 const BASELINE = "base123";
 const SIDE_A = "side-a";
@@ -170,8 +171,8 @@ describe("composition authority", () => {
 
 	it("a resolved SHA needs new evidence; a contributing SHA and an old hash cannot authorize it", async () => {
 		const ctx = makeCtx();
-		let state = await accepted(ctx, SIDE_A);
-		state = await recordComposition(state, composition({ status: "RESOLVED", candidate_sha: RESOLVED }), ctx);
+		let state = await recordComposition(await accepted(ctx, SIDE_A), composition(), ctx);
+		state = await recordComposition(state, composition({ status: "RESOLVED", candidate_sha: RESOLVED, resolution: resolutionFor(state) }), ctx);
 		await assert.rejects(
 			submitEvaluation(state, await makeBundle({ candidate_sha: SIDE_A }), { zone: "evaluation_domain" }, ctx),
 			/contributing SHA/,
@@ -194,9 +195,10 @@ describe("composition authority", () => {
 		await assert.rejects(issuePermit(reused.state, RESOLVED, "acme/api", BASELINE, ctx), /no ACCEPT verdict/);
 
 		const fresh = await makeBundle({ candidate_sha: RESOLVED, tree_sha256: "tree-resolved" });
-		let clean = await recordComposition(
-			observed(RESOLVED),
-			composition({ status: "RESOLVED", candidate_sha: RESOLVED }),
+		let clean = await recordComposition(observed(RESOLVED), composition(), ctx);
+		clean = await recordComposition(
+			clean,
+			composition({ status: "RESOLVED", candidate_sha: RESOLVED, resolution: resolutionFor(clean) }),
 			ctx,
 		);
 		clean = (await submitEvaluation(clean, fresh, { zone: "evaluation_domain" }, ctx)).state;
@@ -251,7 +253,11 @@ describe("composition authority", () => {
 		assert.equal(state.composition?.candidate_sha, null);
 		assert.equal(buildWorkGraph(state).composition_state, "RESOLVING");
 		const resolvingPermit = await issuePermit(
-			await recordComposition(await accepted(ctx, SIDE_A), composition({ status: "RESOLVING", candidate_sha: null }), ctx),
+			await recordComposition(
+				await recordComposition(await accepted(ctx, SIDE_A), composition(), ctx),
+				composition({ status: "RESOLVING", candidate_sha: null }),
+				ctx,
+			),
 			SIDE_A,
 			"acme/api",
 			BASELINE,
@@ -263,7 +269,7 @@ describe("composition authority", () => {
 			recordComposition(state, composition({ status: "RESOLVED", candidate_sha: SIDE_B }), ctx),
 			/must be new/,
 		);
-		state = await recordComposition(state, composition({ status: "RESOLVED", candidate_sha: RESOLVED }), ctx);
+		state = await recordComposition(state, composition({ status: "RESOLVED", candidate_sha: RESOLVED, resolution: resolutionFor(state) }), ctx);
 		const graph = buildWorkGraph(state);
 		assert.equal(graph.composition_state, "RESOLVED");
 		assert.equal(graph.candidate_sha, RESOLVED);
@@ -402,9 +408,26 @@ describe("composition route", () => {
 			body: { composition: composition({ contender_id: h.contenderId, baseline: h.baseline, status: "RESOLVING", candidate_sha: null }) },
 		});
 		assert.equal(resolving.status, 200, JSON.stringify(resolving.body));
-		const resolved = await call(h, "POST", `/tasks/${h.taskId}/composition`, {
+		const unbound = await call(h, "POST", `/tasks/${h.taskId}/composition`, {
 			token: TOKENS.control,
 			body: { composition: composition({ contender_id: h.contenderId, baseline: h.baseline, status: "RESOLVED", candidate_sha: RESOLVED }) },
+		});
+		assert.equal(unbound.status, 422, JSON.stringify(unbound.body));
+		assert.match(unbound.body.detail, /RESOLVED requires a resolution block/);
+		const capsuleId = visible.body.composition.capsule_id as string;
+		assert.match(capsuleId, /^[0-9a-f]{64}$/);
+		const resolution = {
+			format: "madgrix-resolution/v1" as const,
+			capsule_id: capsuleId,
+			resolver_id: "test-resolver",
+			rung: "command" as const,
+			order_agreement: null,
+			lease: { paths: ["src/shared.js"], precomposed_tree: "a".repeat(40) },
+			witness: { witness_manifest_sha256: null, witness_report_sha256: "b".repeat(64), verdict: "ADMIT" as const, review_cleared_by: null },
+		};
+		const resolved = await call(h, "POST", `/tasks/${h.taskId}/composition`, {
+			token: TOKENS.control,
+			body: { composition: composition({ contender_id: h.contenderId, baseline: h.baseline, status: "RESOLVED", candidate_sha: RESOLVED, resolution }) },
 		});
 		assert.equal(resolved.status, 200, JSON.stringify(resolved.body));
 		const after = await call(h, "GET", `/tasks/${h.taskId}/graph?format=json`, { token: TOKENS.agent });

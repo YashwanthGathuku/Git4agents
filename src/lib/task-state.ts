@@ -39,6 +39,15 @@ import { compositionEvidenceError, compositionMemberShas, promotableCompositionS
 import { mergeArtifactAdmissionRefuses, reportedMergeArtifactPaths } from "./merge-artifacts.ts";
 import { validateAncestryProof, type AncestryProof } from "./ancestry-proof.ts";
 import { verifyReveal } from "./verifiers.ts";
+import { buildConflictCapsuleV2 } from "./conflict-capsule.ts";
+import {
+	normalizeDigest,
+	normalizeHunks,
+	normalizeResolution,
+	normalizeWitnessCheck,
+	resolutionPayload,
+	riskyMemberPairs,
+} from "./resolution-authority.ts";
 import {
 	importEd25519PublicKey,
 	keyidForPublicKey,
@@ -1390,6 +1399,7 @@ function normalizeComposition(input: CompositionRecord): CompositionRecord {
 		if (file.classification !== "textual-line-overlap") {
 			throw new Error("recordComposition: unknown conflict classification");
 		}
+		const hunks = normalizeHunks((file as { hunks?: unknown }).hunks);
 		return {
 			path: file.path,
 			classification: "textual-line-overlap" as const,
@@ -1400,6 +1410,7 @@ function normalizeComposition(input: CompositionRecord): CompositionRecord {
 				sha: side.sha,
 				excerpt: typeof side.excerpt === "string" ? side.excerpt.slice(0, 400) : "",
 			})),
+			...(hunks ? { hunks } : {}),
 		};
 	});
 	return {
@@ -1417,6 +1428,7 @@ function normalizeComposition(input: CompositionRecord): CompositionRecord {
 		contributing_shas: [...input.contributing_shas],
 		files,
 		candidate_sha: promotable ? input.candidate_sha : null,
+		witness_manifest_sha256: normalizeDigest(input.witness_manifest_sha256, "witness_manifest_sha256"),
 	};
 }
 
@@ -1439,6 +1451,50 @@ export async function recordComposition(
 		throw new Error("recordComposition: baseline is not the frozen task baseline");
 	}
 	const current = state.composition;
+	// Governed resolution (specs/amendments/governed-resolution-v1.md §5).
+	if (input.resolution !== undefined && input.resolution !== null && composition.status !== "RESOLVED") {
+		throw new Error("recordComposition: only RESOLVED carries a resolution block");
+	}
+	if (input.witness_check !== undefined && input.witness_check !== null && composition.status !== "COMPOSED") {
+		throw new Error("recordComposition: only COMPOSED carries a witness check");
+	}
+	if (composition.status === "CONFLICTED") {
+		// The authority computes the capsule id; a supplied one must agree.
+		const capsule = await buildConflictCapsuleV2(state.task.task_hash, composition, ctx.sha256Hex);
+		if (typeof input.capsule_id === "string" && input.capsule_id !== capsule.capsule_id) {
+			throw new Error("recordComposition: the supplied capsule_id is not this conflict's capsule");
+		}
+		composition.capsule_id = capsule.capsule_id;
+	} else if (composition.status === "RESOLVING" || composition.status === "RESOLVED") {
+		if (!current || (current.status !== "CONFLICTED" && current.status !== "RESOLVING")) {
+			throw new Error(`recordComposition: ${composition.status} must follow a recorded CONFLICTED composition`);
+		}
+		if (canonicalJson([...composition.contributing_shas].sort()) !== canonicalJson([...current.contributing_shas].sort())) {
+			throw new Error(`recordComposition: ${composition.status} names other contributing SHAs than the conflict`);
+		}
+		// The conflict, its capsule and its frozen witness manifest are the
+		// authority's record, not the caller's.
+		composition.files = current.files;
+		composition.capsule_id = current.capsule_id ?? null;
+		composition.witness_manifest_sha256 = current.witness_manifest_sha256 ?? null;
+		if (composition.status === "RESOLVED") composition.resolution = normalizeResolution(input.resolution, current);
+	} else if (composition.status === "COMPOSED") {
+		if (input.witness_check !== undefined && input.witness_check !== null) {
+			composition.witness_check = normalizeWitnessCheck(input.witness_check, "witness_check");
+		}
+		const risky = riskyMemberPairs(state, composition);
+		if (risky.length > 0) {
+			if (!composition.witness_check) {
+				throw new Error(
+					`recordComposition: member claims ${risky.map(([a, b]) => `${a}/${b}`).join(", ")} are RED or BLOCKED; ` +
+						"a COMPOSED candidate over them needs a witness check",
+				);
+			}
+			if (composition.witness_check.witness_manifest_sha256 !== (composition.witness_manifest_sha256 ?? null)) {
+				throw new Error("recordComposition: the witness check ran another manifest than the composition names");
+			}
+		}
+	}
 	if (current) {
 		if (current.contender_id !== composition.contender_id) {
 			throw new Error("recordComposition: this task already has a composition for another contender");
@@ -1460,13 +1516,18 @@ export async function recordComposition(
 			throw new Error(`recordComposition: ${current.status} cannot become ${composition.status}`);
 		}
 	}
-	return appendLedger({ ...state, composition }, "composition_recorded", {
+	const recorded = await appendLedger({ ...state, composition }, "composition_recorded", {
 		status: composition.status,
 		contender_id: composition.contender_id,
 		candidate_sha: composition.candidate_sha,
 		contributing_shas: composition.contributing_shas,
 		files: composition.files.map((file) => file.path),
+		...(composition.capsule_id ? { capsule_id: composition.capsule_id } : {}),
+		...(composition.witness_manifest_sha256 ? { witness_manifest_sha256: composition.witness_manifest_sha256 } : {}),
+		...(composition.witness_check ? { witness_check: composition.witness_check } : {}),
 	}, ctx);
+	const payload = resolutionPayload(composition);
+	return payload === null ? recorded : appendLedger(recorded, "resolution_recorded", payload, ctx);
 }
 
 export type IssuePermitResult =
@@ -2084,6 +2145,11 @@ export async function recordPromotionBundle(
 		ledger: { head_sha256: head, entries: ledger },
 		authority_pubkey_der_hex: signer.publicKeyDerHex,
 	};
+	// A resolved candidate carries its resolution: the payload whose hash the
+	// signed ledger recorded as `resolution_recorded`
+	// (specs/amendments/governed-resolution-v1.md §6).
+	const resolved = state.composition ? resolutionPayload(state.composition) : null;
+	if (resolved !== null && resolved.candidate_sha === candidateCommit) bundle.resolution = resolved;
 	return {
 		state: { ...state, ledger, promotion_bundles: { ...(state.promotion_bundles ?? {}), [permit_id]: bundle } },
 		bundle,
