@@ -5,3 +5,4 @@ node_modules/
 .slice-output/
 keys/*.pem
 keys/*private*
+.madgrix-demo/
