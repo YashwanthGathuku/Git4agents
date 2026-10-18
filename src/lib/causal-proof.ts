@@ -133,6 +133,19 @@ export async function buildCausalProofGraph(
 				contributing_shas: composition.contributing_shas,
 				candidate_sha: composition.candidate_sha,
 				files: composition.files.map((f) => ({ path: f.path, classification: f.classification })),
+				...(composition.capsule_id ? { capsule_id: composition.capsule_id } : {}),
+				...(composition.resolution
+					? {
+							resolution: {
+								rung: composition.resolution.rung,
+								resolver_id: composition.resolution.resolver_id,
+								order_agreement: composition.resolution.order_agreement ?? null,
+								witness_verdict: composition.resolution.witness.verdict,
+								review_cleared_by: composition.resolution.witness.review_cleared_by ?? null,
+							},
+						}
+					: {}),
+				...(composition.witness_check ? { witness_verdict: composition.witness_check.verdict } : {}),
 			},
 			sha256Hex,
 		);

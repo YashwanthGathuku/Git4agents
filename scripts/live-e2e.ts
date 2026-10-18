@@ -196,16 +196,26 @@ function bearer(token: string): Record<string, string> {
 	return { authorization: `Bearer ${token}` };
 }
 
-/** Posts the runner's composition with the control token. The runner never sees that token. */
-async function recordForkComposition(run: { composition?: unknown }): Promise<void> {
-	if (!run.composition || typeof run.composition !== "object") {
+/**
+ * Posts the runner's composition records with the control token, in order
+ * (CONFLICTED before RESOLVED: specs/amendments/governed-resolution-v1.md §5).
+ * The runner never sees that token.
+ */
+async function recordForkComposition(run: { composition?: unknown; compositions?: unknown }): Promise<void> {
+	const records = Array.isArray(run.compositions) ? run.compositions : run.composition ? [run.composition] : [];
+	if (records.length === 0 || records.some((r) => !r || typeof r !== "object")) {
 		throw new Error("fork crew result has no composition record for the control plane");
 	}
-	await requestJson(`${baseUrl}/tasks/${encodeURIComponent(taskId)}/composition`, {
-		token: controlToken,
-		body: { composition: run.composition },
-	});
+	for (const composition of records) {
+		await requestJson(`${baseUrl}/tasks/${encodeURIComponent(taskId)}/composition`, {
+			token: controlToken,
+			body: { composition },
+		});
+	}
 }
+
+/** Fork-crew outcomes that stop before a candidate is pushed. */
+const BLOCKED_CREW = new Set(["CONFLICTED", "REVIEW", "SEMANTIC_CONFLICT"]);
 
 async function requestJson(
 	url: string,
@@ -398,16 +408,18 @@ try {
 	} catch (err) {
 		if (forkCrew) {
 			const blocked = await readFile(contenderResultPath, "utf8").catch(() => "");
-			let parsed: { status?: string; composition?: unknown } | null = null;
+			let parsed: { status?: string; composition?: unknown; compositions?: unknown; detail?: string } | null = null;
 			try {
 				parsed = JSON.parse(blocked);
 			} catch {
 				parsed = null;
 			}
-			if (parsed?.status === "CONFLICTED") {
-				await recordForkComposition(parsed);
+			if (parsed?.status && BLOCKED_CREW.has(parsed.status)) {
+				const hasRecords = Array.isArray(parsed.compositions) ? parsed.compositions.length > 0 : Boolean(parsed.composition);
+				if (hasRecords) await recordForkComposition(parsed);
 				throw new Error(
-					`fork crew is CONFLICTED and was not pushed. The control plane recorded the conflict. Refusing evaluation and promotion. ${err instanceof Error ? err.message : ""}`,
+					`fork crew is ${parsed.status} and was not pushed${hasRecords ? "; the control plane recorded the conflict" : ""}. ` +
+						`Refusing evaluation and promotion. ${parsed.detail ?? ""} ${err instanceof Error ? err.message : ""}`,
 				);
 			}
 		}
@@ -415,9 +427,9 @@ try {
 	}
 	const contenderRun = JSON.parse(await readFile(contenderResultPath, "utf8"));
 	if (forkCrew) {
-		if (contenderRun.status === "CONFLICTED") {
-			await recordForkComposition(contenderRun);
-			throw new Error("fork crew is CONFLICTED. The control plane recorded the conflict. Refusing evaluation and promotion.");
+		if (BLOCKED_CREW.has(contenderRun.status)) {
+			if ((contenderRun.compositions ?? []).length > 0 || contenderRun.composition) await recordForkComposition(contenderRun);
+			throw new Error(`fork crew is ${contenderRun.status}. Refusing evaluation and promotion.`);
 		}
 		await recordForkComposition(contenderRun);
 	}

@@ -173,11 +173,12 @@ describe("verifyBundle (spec 4 §7 transcript)", () => {
 				"signature",
 				"permit id",
 				"ledger chain",
+				"resolution",
 			],
 		);
 		assert.deepEqual(
 			lines.map((l) => l.status),
-			["OK", "OK", "OK", "PASSED", "OK", "OK", "PINNED", "VALID", "RECOMPUTED FROM BOUND FIELDS", "OK"],
+			["OK", "OK", "OK", "PASSED", "OK", "OK", "PINNED", "VALID", "RECOMPUTED FROM BOUND FIELDS", "OK", "NONE (not a resolved candidate)"],
 		);
 	});
 

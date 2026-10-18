@@ -27,7 +27,9 @@
     "evaluate": "node scripts/evaluate-candidate.ts",
     "live:e2e": "node scripts/live-e2e.ts",
     "demo:memory": "node scripts/demo-memory.ts",
-    "bench:memory": "node scripts/bench-memory.ts"
+    "bench:memory": "node scripts/bench-memory.ts",
+    "demo:resolution": "node scripts/demo-resolution.ts",
+    "bench:resolution": "node scripts/bench-resolution.mjs"
   },
   "type": "module",
   "version": "0.1.0"

@@ -2,7 +2,7 @@
 
 **The trust layer for agent-written code.**
 
-[![tests](https://img.shields.io/badge/tests-455%20passing-2ea44f)](test)
+[![tests](https://img.shields.io/badge/tests-482%20passing-2ea44f)](test)
 [![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://madgrix.ygathuku96.workers.dev)
 
@@ -36,6 +36,7 @@ Judging criteria tags: **[O]** originality · **[C]** concurrency, coordination 
 - **3,000-agent claim scale run**: 3,000/3,000 claims granted, 149/149 seeded overlaps flagged, 0 false flags, intact ledger chain. **[C]**
 - **Module memory cards**: one card per module, held by per-module Durable Object agents that sleep between requests and wake on routed changes; a second pass re-read 25 of 184 files. **[O][C]**
 - **Same-file combine**: per-file three-way merge turns disjoint edits, even in one file, into one COMPOSED commit; overlapping lines become CONFLICTED, never dropped. **[C]**
+- **Governed resolution**: overlapping work is resolved, not just flagged. A resolver (Mergiraf, an LLM replayer run in both orders, or a person's command) may write only the conflicted hunks; each agent's frozen witnesses must still pass; the RESOLVED SHA is bound to its Conflict Capsule in the signed ledger and offline verify names it. On the [resolution benchmark](bench/resolution/README.md) the competition-era resolve path admitted 37 wrong resolutions out of 64 attempts; the governed path admitted none. **[O][C]**
 - **TheUstad done-check**: a "done" commit that is not on the frozen baseline is `FINAL FALSIFIED` and nothing is written. **[C]**
 - **Bring any public repo into the live mall**: [/board/new](https://madgrix.ygathuku96.workers.dev/board/new) imports it, freezes a task, claims and forks per agent, and opens `/board?live=1`. **[E]**
 - **All on Cloudflare**: Workers, Durable Objects, Queues, Containers, Workflows and Artifacts. **[E]**
@@ -123,7 +124,8 @@ Git4agents:  claim -> isolated fork -> evidence -> blind verdict -> exact-state 
 | **TheUstad gate** | In the fork-crew path, checks the parent is clean and still on the frozen baseline before composition; it is not the semantic judge |
 | **Verdict seam** | Runs non-compensatory integrity gates first; then objective ordering and blind verification |
 | **CanonCap / exact-state permit** | One content-bound, single-use right to canonicalize one exact state under one exact destination HEAD |
-| **Conflict Capsule** | Makes `CONFLICTED` explicitly non-shippable and requires a new resolved SHA plus re-evaluation |
+| **Conflict Capsule** | Makes `CONFLICTED` explicitly non-shippable and requires a new resolved SHA plus re-evaluation; v2 adds per-hunk digests and the frozen witness manifest, and the authority computes its id |
+| **Governed resolution** | Resolution lease (only conflicted hunks are writable), frozen per-agent witnesses (ADMIT / REFUSE / REVIEW), a resolution ladder (Mergiraf → dual-order replay → REVIEW), and a RESOLVED record bound to its capsule (`specs/amendments/governed-resolution-v1.md`) |
 | **Causal Proof Graph** | Answers: *why did this exact SHA have the right to become canonical?* |
 | **Signed promotion bundle** | DSSE/in-toto evidence chain signed by TaskAuthority and independently verifiable offline |
 | **Module memory** | Deterministic, model-free per-module memory cards so unchanged modules do not need to be reread on every pass |
@@ -180,7 +182,7 @@ See [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md) for curre
 3. **Create bounded contender state.** Parent opens one governed Artifacts fork for a fork crew.
 4. **Claim before coding.** Sub-agents register scoped WorkClaims with intent and lease.
 5. **Work concurrently.** Agents commit lane changes to contender state, not canonical Git.
-6. **Compose.** Disjoint edits become `COMPOSED`; unresolved overlaps become `CONFLICTED`; resolution creates a new SHA.
+6. **Compose.** Disjoint edits become `COMPOSED`; unresolved overlaps become `CONFLICTED` with a Conflict Capsule; the resolution ladder may produce a new SHA under a lease, admitted only if every side's frozen witnesses pass. A clean merge that breaks a witnessed intent is a `SEMANTIC_CONFLICT` and is not pushed.
 7. **Observe the real Git push.** Artifacts emits a push event; Queue delivers it; TaskAuthority reconciles it into authoritative state.
 8. **Evaluate the immutable candidate.** Mandatory gates run in the independent evaluation domain.
 9. **Blind verifiers reveal and sign.** Invalid reveal is inadmissible; reports cannot be rewritten after seeing outcomes.
@@ -352,7 +354,7 @@ The old `/replay` page is retired and 301-redirects to `/board`. Simulated attac
 
 | Evidence | Result | Where |
 |---|---|---|
-| Test suite | **455 passing** | `npm test` |
+| Test suite | **482 passing** | `npm test` |
 | Type checking | available | `npm run typecheck` |
 | Attack lab | **26/26 blocked, 0 unauthorized promotions** | `npm run attack:lab` |
 | Offline verification | signed bundles end in **VERIFIED**; tampered bundle ends **NOT VERIFIED** | `npm run verify -- --trust-key keys/authority.pub <bundle>` |
@@ -421,6 +423,8 @@ The external demo repository `ext-ky` is `sindresorhus/ky` (MIT) imported into C
 | System trust zones, protocol stages, code map | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Live Cloudflare primitives and deployment evidence | [docs/CLOUDFLARE_ARCHITECTURE.md](docs/CLOUDFLARE_ARCHITECTURE.md) |
 | Canonicality, CanonCap, causal proof graph, conflict capsule | [docs/CANONICALITY.md](docs/CANONICALITY.md) |
+| Governed resolution: lease, witnesses, ladder, binding | [specs/amendments/governed-resolution-v1.md](specs/amendments/governed-resolution-v1.md) |
+| Resolution benchmark and results | [bench/resolution/README.md](bench/resolution/README.md) |
 | Canonicality primitives | [docs/CANONICALITY_PRIMITIVES.md](docs/CANONICALITY_PRIMITIVES.md) |
 | Prior-art / non-novelty boundary | [docs/CANONICALITY_PRIOR_ART.md](docs/CANONICALITY_PRIOR_ART.md) |
 | Exact MCP protocol surface and seven agent-safe tools | [docs/MCP_AGENT_TOOLS.md](docs/MCP_AGENT_TOOLS.md) |
@@ -444,6 +448,7 @@ The external demo repository `ext-ky` is `sindresorhus/ky` (MIT) imported into C
 - Recorded live agents are **scripted processes**, not evidence of LLM coding intelligence; the project demonstrates the coordination, governance, canonicalization, and proof substrate.
 - Simulated attacks run in the local test harness (`npm run attack:lab`); the live cheater run separately demonstrates live quarantine behavior.
 - TheUstad in the fork-crew flow is a frozen-baseline integrity/done gate, not the semantic judge. Independent evaluation and blind verification judge the candidate.
+- Governed resolution is as strong as its witnesses: a resolution that keeps every witnessed behaviour but breaks an unwitnessed one is admitted. The resolution benchmark is 12 author-written scenarios, not a real-world sample, and no LLM resolver has been evaluated. A resolved crew has not yet run on Cloudflare.
 - Overlapping WorkClaims are **flagged**, not automatically refused. Scale numbers are for the coordination layer; commits scale through fork crews rather than one fork per agent.
 - One `TaskAuthority` Durable Object serializes a task; claim latency rises with N. Separate tasks use separate Durable Objects.
 - Queue delivery is observed live, but a deliberate at-least-once redelivery fault-injection campaign is not claimed.

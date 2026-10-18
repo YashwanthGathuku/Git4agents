@@ -100,6 +100,7 @@ const TRANSCRIPT_LABELS = [
 	"signature",
 	"permit id",
 	"ledger chain",
+	"resolution",
 ] as const;
 
 async function main(): Promise<number> {

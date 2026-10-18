@@ -270,6 +270,7 @@ describe("forged promotion bundles", () => {
 					["signature", "VALID"],
 					["permit id", "RECOMPUTED FROM BOUND FIELDS"],
 					["ledger chain", "OK"],
+					["resolution", "NONE (not a resolved candidate)"],
 				],
 			);
 			assert.match(run.stdout, /^VERIFIED$/m);

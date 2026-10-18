@@ -21,6 +21,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -31,13 +32,14 @@ import { assertForkAtBaseline } from "./lib/fork-baseline.mjs";
 import {
 	DEFAULT_FORK_CREW_CONFIG,
 	assertFleetRoster,
-	authorityComposition,
 	fleetConfigForCrew,
 	loadForkCrew,
-	resolveComposition,
 	runCrewOnFork,
 	useToolStatusSession,
 } from "./lib/fork-crew.mjs";
+import { governCrewResult } from "./lib/governed-resolution.mjs";
+import { REPLAYER_ENV_NAMES } from "./lib/resolve-ladder.mjs";
+import { freezeWitnesses, loadWitnesses } from "./lib/witness.mjs";
 
 const baseUrl = process.env.MADGRIX_BASE_URL?.replace(/\/$/, "");
 const taskId = process.env.MADGRIX_TASK_ID;
@@ -61,10 +63,17 @@ if (claimPaths.length === 0 || claimPaths.includes("**")) {
 
 /** @type {ReturnType<typeof loadForkCrew>} */
 let crew;
+/** @type {ReturnType<typeof loadWitnesses>} */
+let witnesses = null;
+/** @type {Record<string, { symbols?: string[], reads?: string[], modifies?: string[] }>} */
+let declaredClaims = {};
 try {
 	const crewConfig = process.env.MADGRIX_FORK_CREW_CONFIG || DEFAULT_FORK_CREW_CONFIG;
 	crew = loadForkCrew(crewConfig);
 	assertFleetRoster(crew, process.env.MADGRIX_FLEET_CONFIG || fleetConfigForCrew(crewConfig));
+	// Frozen here, before any agent runs (specs/amendments/governed-resolution-v1.md §3).
+	witnesses = loadWitnesses(crewConfig, crew);
+	declaredClaims = readDeclaredClaims(crewConfig);
 } catch (err) {
 	console.error(/** @type {Error} */ (err).message);
 	process.exit(2);
@@ -213,6 +222,27 @@ async function pushWasApplied(contenderId, sha, timeoutMs) {
 }
 
 /**
+ * Symbols and contracts a crew config declares for a sub-agent
+ * (`claim: { symbols, reads, modifies }`), so the authority's conflict graph can
+ * classify crew claims beyond paths. Absent fields stay empty, as before.
+ *
+ * @param {string} configPath
+ * @returns {Record<string, { symbols?: string[], reads?: string[], modifies?: string[] }>}
+ */
+function readDeclaredClaims(configPath) {
+	const raw = JSON.parse(readFileSync(configPath, "utf8"));
+	/** @param {unknown} v */
+	const strings = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.length > 0) : []);
+	/** @type {Record<string, { symbols?: string[], reads?: string[], modifies?: string[] }>} */
+	const out = {};
+	for (const sub of Array.isArray(raw.subs) ? raw.subs : []) {
+		if (!sub || typeof sub.id !== "string" || !sub.claim || typeof sub.claim !== "object") continue;
+		out[sub.id] = { symbols: strings(sub.claim.symbols), reads: strings(sub.claim.reads), modifies: strings(sub.claim.modifies) };
+	}
+	return out;
+}
+
+/**
  * @param {string} agentId
  * @param {string[]} paths
  * @param {string} taskHash
@@ -225,8 +255,8 @@ function claimBody(agentId, paths, taskHash, baseline) {
 		task: taskHash,
 		baseline,
 		intent: { behavior: [task.intent] },
-		scope: { paths, symbols: [] },
-		contracts: { reads: [], modifies: [] },
+		scope: { paths, symbols: declaredClaims[agentId]?.symbols ?? [] },
+		contracts: { reads: declaredClaims[agentId]?.reads ?? [], modifies: declaredClaims[agentId]?.modifies ?? [] },
 		interfaces: [],
 		schema_changes: [],
 		expected_tests: [],
@@ -270,6 +300,10 @@ try {
 		env: gitAuthEnv(token),
 	});
 	assertForkAtBaseline(dir, task.baseline_commit, minimalEnv());
+	/** Sub-agent claim ids, so a RED/BLOCKED report can be traced to its other side. */
+	const subClaimIds = new Map();
+	/** @type {string[]} Sides whose claims the authority classified RED or BLOCKED. */
+	const riskySides = [];
 	for (const sub of crew.subs) {
 		const secret = /** @type {string} */ (agentSecrets[sub.id]);
 		const claimed = await postJson(
@@ -279,6 +313,11 @@ try {
 		);
 		if (typeof claimed.work_id !== "string") throw new Error(`${sub.id} claim returned no work_id`);
 		/** @type {{ claim_work_id?: string }} */ (sub).claim_work_id = claimed.work_id;
+		subClaimIds.set(claimed.work_id, sub.id);
+		for (const report of Array.isArray(claimed.conflicts) ? claimed.conflicts : []) {
+			const other = subClaimIds.get(report?.with);
+			if ((report?.risk === "RED" || report?.risk === "BLOCKED") && other) riskySides.push(sub.id, other);
+		}
 		console.error(`[Git4agents] ${sub.id} (${sub.role}) claimed ${sub.paths.join(", ")} on ${forkRepo}`);
 	}
 	useToolStatusSession({
@@ -290,59 +329,70 @@ try {
 		harness: "madgrix-fork-crew/0.1.0",
 	});
 	const crewRun = await runCrewOnFork(dir, crew);
+	// Witnesses were read and hashed when the crew was loaded; their outcomes
+	// on the baseline and on each side are fixed here, before any resolver
+	// sees the conflict (specs/amendments/governed-resolution-v1.md §3).
+	const frozen = witnesses ? freezeWitnesses(dir, crewRun.baseline, crewRun.commits, witnesses) : null;
+	const resolverCommand = process.env.MADGRIX_RESOLVER_COMMAND;
+	const ladder = process.env.MADGRIX_RESOLVE_LADDER === "1";
+	const governed = await governCrewResult(dir, crewRun, {
+		taskHash: task.task_hash,
+		contenderId,
+		witnesses,
+		frozen,
+		mode: resolverCommand ? "command" : ladder ? "ladder" : "none",
+		command: resolverCommand ?? null,
+		replayer: process.env.MADGRIX_REPLAYER ?? null,
+		replayerId: process.env.MADGRIX_REPLAYER_ID ?? "replayer",
+		replayerEnv: Object.fromEntries(REPLAYER_ENV_NAMES.map((name) => [name, process.env[name]])),
+		mergiraf: "auto",
+		requiredSides: riskySides,
+		reviewClearedBy: process.env.MADGRIX_REVIEW_CLEARED_BY?.trim() || null,
+	});
 	/** @type {string | null} */
-	let candidateSha = crewRun.sha;
+	let candidateSha = governed.candidateSha;
 	/** @type {string} */
-	let compositionStatus = crewRun.status;
+	const compositionStatus = governed.status;
 	/** @type {unknown} */
-	let conflict = crewRun.status === "CONFLICTED" ? crewRun.conflict : null;
-	/** @param {string} status @param {string | null} sha */
-	const compositionFor = (status, sha) =>
-		authorityComposition({
-			status: /** @type {"COMPOSED" | "CONFLICTED" | "RESOLVED"} */ (status),
-			baseline: crewRun.baseline,
-			commits: crewRun.commits,
+	const conflict = crewRun.status === "CONFLICTED" ? crewRun.conflict : null;
+	const compositions = governed.compositions;
+	if (governed.status !== "COMPOSED" && governed.status !== "RESOLVED") {
+		const blocked = {
+			mode: "fork-crew",
+			status: governed.status,
+			fork_repo: forkRepo,
+			parent_agent: crew.parent.id,
+			resolution: governed.status,
+			overlap: crewRun.overlap,
 			conflict: crewRun.conflict,
-			sha,
-			contender_id: contenderId,
-		});
-	if (crewRun.status === "CONFLICTED") {
-		const resolver = process.env.MADGRIX_RESOLVER_COMMAND;
-		if (!resolver) {
-			const blocked = {
-				mode: "fork-crew",
-				status: "CONFLICTED",
-				fork_repo: forkRepo,
-				parent_agent: crew.parent.id,
-				resolution: "CONFLICTED",
-				overlap: crewRun.overlap,
-				conflict: crewRun.conflict,
-				composition: compositionFor("CONFLICTED", null),
-				candidate_sha: null,
-				subagent_commits: crewRun.commits.map((commit) => ({
-					id: commit.id,
-					role: commit.role,
-					intent: commit.intent,
-					sha: commit.sha,
-					claim_work_id: commit.claim_work_id,
-					paths: commit.paths,
-				})),
-			};
-			console.error("[Git4agents] CONFLICTED; not pushing a candidate");
-			if (process.env.MADGRIX_RESULT_PATH) {
-				await writeFile(process.env.MADGRIX_RESULT_PATH, `${JSON.stringify(blocked, null, 2)}\n`);
-			} else {
-				process.stdout.write(`${JSON.stringify(blocked)}\n`);
-			}
-			process.exitCode = 3;
+			compositions,
+			composition: compositions.at(-1) ?? null,
+			capsule_id: "capsule" in governed ? governed.capsule?.capsule_id ?? null : null,
+			review: "review" in governed ? governed.review : null,
+			witness: "witness" in governed && governed.witness ? governed.witness.report : null,
+			detail: "detail" in governed ? governed.detail : null,
+			candidate_sha: null,
+			subagent_commits: crewRun.commits.map((commit) => ({
+				id: commit.id,
+				role: commit.role,
+				intent: commit.intent,
+				sha: commit.sha,
+				claim_work_id: commit.claim_work_id,
+				paths: commit.paths,
+			})),
+		};
+		console.error(`[Git4agents] ${governed.status}; not pushing a candidate`);
+		if (process.env.MADGRIX_RESULT_PATH) {
+			await writeFile(process.env.MADGRIX_RESULT_PATH, `${JSON.stringify(blocked, null, 2)}\n`);
 		} else {
-		const resolved = resolveComposition(dir, crewRun, resolver);
-		candidateSha = resolved.sha;
-		compositionStatus = resolved.status;
-		console.error(
-			`[Git4agents] resolved ${candidateSha.slice(0, 12)} from CONFLICTED; the new SHA still needs evaluation`,
-		);
+			process.stdout.write(`${JSON.stringify(blocked)}\n`);
 		}
+		process.exitCode = 3;
+	} else if (governed.status === "RESOLVED") {
+		console.error(
+			`[Git4agents] resolved ${String(candidateSha).slice(0, 12)} from CONFLICTED (capsule ${governed.capsule?.capsule_id.slice(0, 12)}); ` +
+				"the new SHA still needs evaluation",
+		);
 	}
 	if (process.exitCode !== 3) {
 	if (typeof candidateSha !== "string" || candidateSha.length === 0) {
@@ -388,7 +438,8 @@ try {
 		resolution: compositionStatus,
 		overlap: crewRun.overlap,
 		conflict,
-		composition: compositionFor(compositionStatus, candidateSha),
+		compositions,
+		composition: compositions.at(-1) ?? null,
 		theustad: crewRun.theustad,
 		subagent_commits: crewRun.commits.map((commit) => ({
 			id: commit.id,

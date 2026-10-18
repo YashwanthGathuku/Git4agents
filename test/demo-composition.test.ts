@@ -19,6 +19,8 @@ import { assumeCompleteMergeArtifactScan } from "../src/lib/merge-artifacts.ts";
 import { createAuthority, recordComposition, submitEvaluation, type Ctx } from "../src/lib/task-state.ts";
 import type { EvaluationBundle } from "../src/lib/types.ts";
 import { authorityComposition, loadForkCrew, resolveComposition, runCrewOnFork } from "../scripts/lib/fork-crew.mjs";
+import { resolutionRecord } from "../scripts/lib/resolve-ladder.mjs";
+import { freezeWitnesses, loadWitnesses, witnessReport } from "../scripts/lib/witness.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const demoConfig = path.join(root, "configs/demo-composition.json");
@@ -128,14 +130,11 @@ describe("demo composition fixture", () => {
 		assert.equal(git(repo, ["show", `${resolved.sha}:src/contract.js`]), 'export const label = "api+ui";');
 		assert.doesNotMatch(git(repo, ["show", `${resolved.sha}:src/contract.js`]), /<<<<<<<|>>>>>>>/);
 
-		const recorded = authorityComposition({
-			status: "RESOLVED",
-			contender_id: "contender-demo",
-			baseline: conflicted.baseline,
-			commits: conflicted.commits,
-			conflict: conflicted.conflict,
-			sha: resolved.sha,
-		});
+		// The crew's frozen witnesses judge the resolver's commit: both sides'
+		// intents survive in "api+ui", so the gate admits it.
+		const witnesses = loadWitnesses(demoConfig, crew);
+		assert.ok(witnesses);
+		const frozen = freezeWitnesses(repo, conflicted.baseline, conflicted.commits, witnesses);
 		const ctx: Ctx = {
 			now: () => "2026-10-06T12:00:00.000Z",
 			randomHex: (n: number) => "a".repeat(n * 2),
@@ -164,9 +163,44 @@ describe("demo composition fixture", () => {
 			claim_work_id: null,
 			latest_commit: resolved.sha,
 		};
-		const stored = await recordComposition(state, recorded, ctx);
+		const conflictedState = await recordComposition(
+			state,
+			authorityComposition({
+				status: "CONFLICTED",
+				contender_id: "contender-demo",
+				baseline: conflicted.baseline,
+				commits: conflicted.commits,
+				conflict: conflicted.conflict,
+				sha: null,
+				witness_manifest_sha256: witnesses.sha256,
+			}),
+			ctx,
+		);
+		const capsuleId = conflictedState.composition?.capsule_id;
+		assert.match(capsuleId ?? "", /^[0-9a-f]{64}$/);
+		const witness = witnessReport(repo, resolved.sha, witnesses, frozen, {
+			requiredSides: ["sub-api", "sub-ui"],
+			capsuleId,
+		});
+		assert.equal(witness.verdict, "ADMIT");
+		const recorded = authorityComposition({
+			status: "RESOLVED",
+			contender_id: "contender-demo",
+			baseline: conflicted.baseline,
+			commits: conflicted.commits,
+			conflict: conflicted.conflict,
+			sha: resolved.sha,
+			witness_manifest_sha256: witnesses.sha256,
+			resolution: resolutionRecord(
+				{ sha: resolved.sha, rung: resolved.resolver.rung, resolver_id: resolved.resolver.id, lease: resolved.lease, witness },
+				{ capsuleId: capsuleId as string, witnessManifestSha256: witnesses.sha256 },
+			),
+		});
+		const stored = await recordComposition(conflictedState, recorded, ctx);
 		assert.equal(stored.composition?.status, "RESOLVED");
 		assert.equal(stored.composition?.candidate_sha, resolved.sha);
+		assert.equal(stored.composition?.resolution?.capsule_id, capsuleId);
+		assert.equal(stored.ledger.filter((entry) => entry.kind === "resolution_recorded").length, 1);
 		const side = conflicted.commits[0].sha;
 		const rest = {
 			candidate_sha: side,
