@@ -80,8 +80,9 @@ Conflicting scenarios, 64 attempts per pipeline (8 scenarios × 8 behaviours):
 
 Clean-merging scenarios: P0 and P1 admit all four composed candidates, two of
 them wrong (the semantic scenarios). P2 refuses both semantic conflicts and
-admits both controls. A witness check took 87 ms median (117 ms max) per
-candidate with two witnesses.
+admits both controls. A witness check took 89 ms median (116 ms max) per
+candidate with two witnesses in the committed run; timings vary slightly between
+runs, outcomes do not.
 
 What the rows show:
 

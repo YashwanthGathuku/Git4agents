@@ -6,3 +6,8 @@ node_modules/
 keys/*.pem
 keys/*private*
 .madgrix-demo/
+paper/**/*.aux
+paper/**/*.log
+paper/**/*.bbl
+paper/**/*.blg
+paper/**/*.out
