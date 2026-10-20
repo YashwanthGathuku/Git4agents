@@ -1388,6 +1388,8 @@ function normalizeComposition(input: CompositionRecord): CompositionRecord {
 		throw new Error("recordComposition: COMPOSED and RESOLVED require a candidate SHA");
 	} else if (compositionMemberShas(input).includes(input.candidate_sha)) {
 		throw new Error("recordComposition: the candidate SHA must be new, not a contributing SHA");
+	} else if (input.candidate_sha === input.baseline) {
+		throw new Error("recordComposition: the candidate SHA must be new, not the baseline");
 	}
 	if (input.status === "CONFLICTED" && (!Array.isArray(input.files) || input.files.length === 0)) {
 		throw new Error("recordComposition: CONFLICTED names no files");
@@ -1466,11 +1468,23 @@ export async function recordComposition(
 		}
 		composition.capsule_id = capsule.capsule_id;
 	} else if (composition.status === "RESOLVING" || composition.status === "RESOLVED") {
-		if (!current || (current.status !== "CONFLICTED" && current.status !== "RESOLVING")) {
+		// A retried RESOLVED that matches the recorded RESOLVED is normalized the
+		// same way and returns below as the idempotent no-op.
+		const retry = composition.status === "RESOLVED" && current?.status === "RESOLVED";
+		if (!current || (current.status !== "CONFLICTED" && current.status !== "RESOLVING" && !retry)) {
 			throw new Error(`recordComposition: ${composition.status} must follow a recorded CONFLICTED composition`);
 		}
 		if (canonicalJson([...composition.contributing_shas].sort()) !== canonicalJson([...current.contributing_shas].sort())) {
 			throw new Error(`recordComposition: ${composition.status} names other contributing SHAs than the conflict`);
+		}
+		const agentKey = (agents: CompositionRecord["agents"]) =>
+			canonicalJson(
+				[...agents]
+					.map((agent) => ({ id: agent.id, role: agent.role, intent: agent.intent, sha: agent.sha, paths: agent.paths ?? null }))
+					.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+			);
+		if (agentKey(composition.agents) !== agentKey(current.agents)) {
+			throw new Error(`recordComposition: ${composition.status} names other agents than the conflict`);
 		}
 		// The conflict, its capsule and its frozen witness manifest are the
 		// authority's record, not the caller's.
