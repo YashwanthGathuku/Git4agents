@@ -27,6 +27,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { minimalEnv } from "./child-env.mjs";
+import { safeGit } from "./safe-git.mjs";
 import { resolveComposition } from "./fork-crew.mjs";
 import { emptyWitnessReport, witnessReport } from "./witness.mjs";
 
@@ -66,7 +67,7 @@ export function findMergiraf(explicit = process.env.MERGIRAF_BIN) {
 export function sameLeasedText(repo, a, b, paths) {
 	for (const file of paths) {
 		const blob = (/** @type {string} */ sha) =>
-			spawnSync("git", ["rev-parse", `${sha}:${file}`], { cwd: repo, encoding: "utf8", env: minimalEnv() }).stdout.trim();
+			safeGit(repo, ["rev-parse", `${sha}:${file}`], { allowFailure: true }).stdout.trim();
 		if (blob(a) !== blob(b)) return false;
 	}
 	return true;
@@ -266,7 +267,7 @@ export function resolveWithCommand(repo, crewResult, command, opts) {
  */
 function resetToBaseline(repo, baseline) {
 	for (const args of [["checkout", "-B", "main", baseline], ["reset", "--hard", baseline], ["clean", "-fd"]]) {
-		spawnSync("git", args, { cwd: repo, env: minimalEnv() });
+		safeGit(repo, args, { allowFailure: true });
 	}
 }
 
@@ -275,8 +276,8 @@ function resetToBaseline(repo, baseline) {
  * @param {string} sha
  */
 function checkout(repo, sha) {
-	spawnSync("git", ["checkout", "-B", "main", sha], { cwd: repo, env: minimalEnv() });
-	spawnSync("git", ["reset", "--hard", sha], { cwd: repo, env: minimalEnv() });
+	safeGit(repo, ["checkout", "-B", "main", sha], { allowFailure: true });
+	safeGit(repo, ["reset", "--hard", sha], { allowFailure: true });
 }
 
 /**

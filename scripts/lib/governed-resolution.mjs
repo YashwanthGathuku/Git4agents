@@ -17,10 +17,9 @@
  * whose output is gated again.
  */
 
-import { spawnSync } from "node:child_process";
 
 import { buildConflictCapsuleV2 } from "../../src/lib/conflict-capsule.ts";
-import { minimalEnv } from "./child-env.mjs";
+import { safeGit } from "./safe-git.mjs";
 import { authorityComposition } from "./fork-crew.mjs";
 import {
 	REPLAYER_ENV_NAMES,
@@ -194,7 +193,7 @@ function clearableCandidate(repo, candidates) {
  * @param {string} sha
  */
 function resetMain(repo, sha) {
-	spawnSync("git", ["checkout", "-B", "main", sha], { cwd: repo, env: minimalEnv() });
-	spawnSync("git", ["reset", "--hard", sha], { cwd: repo, env: minimalEnv() });
-	spawnSync("git", ["clean", "-fd"], { cwd: repo, env: minimalEnv() });
+	safeGit(repo, ["checkout", "-B", "main", sha], { allowFailure: true });
+	safeGit(repo, ["reset", "--hard", sha], { allowFailure: true });
+	safeGit(repo, ["clean", "-fd"], { allowFailure: true });
 }
