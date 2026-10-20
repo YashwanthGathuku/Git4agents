@@ -43,7 +43,8 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/git4agents"
           tags="${GITHUB_SHA::12}"
-          if [ "${GITHUB_REF_TYPE}" = tag ]; then tags="$tags ${GITHUB_REF_NAME} icse27"; fi
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then tags="$tags ${GITHUB_REF_NAME}"; fi
+          if [ "${GITHUB_REF_TYPE}" = tag ] || [ "${GITHUB_REF_NAME}" = icse27-tool-paper ]; then tags="$tags icse27"; fi
           for t in $tags; do
             docker tag git4agents-demo "$image:$t"
             docker push "$image:$t"

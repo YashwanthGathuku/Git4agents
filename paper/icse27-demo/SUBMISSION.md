@@ -25,9 +25,12 @@ Notification 11 December 2026; camera-ready 20 January 2027.
 1. **Make the container public.** GitHub → your profile → Packages → `git4agents` →
    Package settings → Change visibility → Public. Reviewers pull without logging in.
    The workflow's last step reports whether an anonymous pull works.
-2. **Tag the release** the paper links to: `icse27-demo` (pushing the tag publishes the
-   `:icse27` image). The paper and README link to `.../tree/icse27-demo`.
-3. **Merge PRs #2 and #3**, or leave `main` as it is: the paper links to the tag, so
+2. **Code link.** The paper links to `.../tree/icse27-tool-paper`, and every push to that
+   branch republishes `:icse27` after the image passes its checks. Avoid pushing to it
+   during review unless you mean reviewers to see the change. A tag (e.g. `icse27-demo`)
+   is optional; this session's git proxy refused tag pushes, so create it yourself if
+   you want one, and point the paper at `.../tree/<tag>`.
+3. **Merge PRs #2 and #3**, or leave `main` as it is: the paper links to the branch, so
    reviewers see the right code either way, but the repository front page shows `main`.
 4. **Upload the video** to YouTube (Public or Unlisted, not Private), then replace
    `https://youtu.be/VIDEO-ID` at the end of the abstract and rebuild.
