@@ -40,6 +40,7 @@ import { mergeArtifactAdmissionRefuses, reportedMergeArtifactPaths } from "./mer
 import { validateAncestryProof, type AncestryProof } from "./ancestry-proof.ts";
 import { verifyReveal } from "./verifiers.ts";
 import { buildConflictCapsuleV2 } from "./conflict-capsule.ts";
+import { verifyAdmissionProof } from "./admission-proof.ts";
 import {
 	normalizeDigest,
 	normalizeHunks,
@@ -94,6 +95,11 @@ export interface Ctx {
 	sha256Hex(i: string | Uint8Array): Promise<string>;
 	selectorPolicyHash: string;
 	policyVersion: string;
+	/**
+	 * SPKI DER (hex) of the witness runner's Ed25519 key. When set, COMPOSED
+	 * and RESOLVED records must carry an admission proof (admission-proof.ts).
+	 */
+	witnessRunnerPublicKey?: string | null;
 }
 
 export function defaultCtx(selectorPolicyHash: string): Ctx {
@@ -1388,6 +1394,8 @@ function normalizeComposition(input: CompositionRecord): CompositionRecord {
 		throw new Error("recordComposition: COMPOSED and RESOLVED require a candidate SHA");
 	} else if (compositionMemberShas(input).includes(input.candidate_sha)) {
 		throw new Error("recordComposition: the candidate SHA must be new, not a contributing SHA");
+	} else if (input.candidate_sha === input.baseline) {
+		throw new Error("recordComposition: the candidate SHA must be new, not the baseline");
 	}
 	if (input.status === "CONFLICTED" && (!Array.isArray(input.files) || input.files.length === 0)) {
 		throw new Error("recordComposition: CONFLICTED names no files");
@@ -1466,11 +1474,23 @@ export async function recordComposition(
 		}
 		composition.capsule_id = capsule.capsule_id;
 	} else if (composition.status === "RESOLVING" || composition.status === "RESOLVED") {
-		if (!current || (current.status !== "CONFLICTED" && current.status !== "RESOLVING")) {
+		// A retried RESOLVED that matches the recorded RESOLVED is normalized the
+		// same way and returns below as the idempotent no-op.
+		const retry = composition.status === "RESOLVED" && current?.status === "RESOLVED";
+		if (!current || (current.status !== "CONFLICTED" && current.status !== "RESOLVING" && !retry)) {
 			throw new Error(`recordComposition: ${composition.status} must follow a recorded CONFLICTED composition`);
 		}
 		if (canonicalJson([...composition.contributing_shas].sort()) !== canonicalJson([...current.contributing_shas].sort())) {
 			throw new Error(`recordComposition: ${composition.status} names other contributing SHAs than the conflict`);
+		}
+		const agentKey = (agents: CompositionRecord["agents"]) =>
+			canonicalJson(
+				[...agents]
+					.map((agent) => ({ id: agent.id, role: agent.role, intent: agent.intent, sha: agent.sha, paths: agent.paths ?? null }))
+					.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+			);
+		if (agentKey(composition.agents) !== agentKey(current.agents)) {
+			throw new Error(`recordComposition: ${composition.status} names other agents than the conflict`);
 		}
 		// The conflict, its capsule and its frozen witness manifest are the
 		// authority's record, not the caller's.
@@ -1494,6 +1514,32 @@ export async function recordComposition(
 				throw new Error("recordComposition: the witness check ran another manifest than the composition names");
 			}
 		}
+	}
+	if (ctx.witnessRunnerPublicKey && compositionPromotable(composition.status) && composition.candidate_sha) {
+		const witness =
+			composition.status === "RESOLVED"
+				? composition.resolution?.witness ?? null
+				: composition.witness_check ?? null;
+		await verifyAdmissionProof(
+			(input as { admission_proof?: unknown }).admission_proof,
+			{
+				task_hash: state.task.task_hash,
+				contender_id: composition.contender_id,
+				baseline: composition.baseline,
+				contributing_shas: composition.contributing_shas,
+				candidate_sha: composition.candidate_sha,
+				capsule_id: composition.status === "RESOLVED" ? composition.capsule_id ?? null : null,
+				witness_manifest_sha256: composition.witness_manifest_sha256 ?? null,
+				witness: witness
+					? {
+							witness_report_sha256: witness.witness_report_sha256,
+							verdict: witness.verdict,
+							review_cleared_by: witness.review_cleared_by ?? null,
+						}
+					: null,
+			},
+			ctx.witnessRunnerPublicKey,
+		);
 	}
 	if (current) {
 		if (current.contender_id !== composition.contender_id) {

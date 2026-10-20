@@ -21,13 +21,20 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+export { withRepoLock } from "./repo-lock.mjs";
+export { MainMovedError } from "./main-ref.mjs";
 import { loadContenderIds } from "./agentfleet-slots.mjs";
 import { minimalEnv } from "./child-env.mjs";
+import { DEFAULT_RESOLVER_TIMEOUT_MS, runContained } from "./sandbox.mjs";
+import { MainMovedError, publishMain, readMain, restoreCheckout } from "./main-ref.mjs";
+import { withRepoLock } from "./repo-lock.mjs";
+import { changedControlFiles, restoreControlFiles, snapshotControlFiles } from "./repo-guard.mjs";
+import { GIT_MAX_BUFFER, modeAt, parseRawZ, porcelainZPaths, safeGit, splitZ } from "./safe-git.mjs";
 
 /**
  * SHA-256 of a UTF-8 string, hex.
@@ -279,26 +286,18 @@ export function assertFleetRoster(crew, fleetConfig = DEFAULT_FORK_CREW_FLEET_CO
 /**
  * @param {string} repo
  * @param {string[]} args
- * @param {{ allowFailure?: boolean }} [opts]
+ * @param {{ allowFailure?: boolean, input?: string }} [opts]
  */
 function git(repo, args, opts = {}) {
-	const result = spawnSync("git", args, {
-		cwd: repo,
-		encoding: "utf8",
-		env: gitEnv(),
-	});
-	if (result.error) throw new Error(`git ${args[0]} failed to start`);
-	if ((result.status ?? 1) !== 0 && !opts.allowFailure) {
-		const detail = (result.stderr || result.stdout || "").trim().split("\n")[0];
-		throw new Error(`git ${args[0]} exited ${result.status}${detail ? `: ${detail}` : ""}`);
-	}
-	return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+	// Hooks, fsmonitor and outside config are off for every control-plane call
+	// (safe-git.mjs); a resolver or sub-agent may have planted them.
+	return safeGit(repo, args, { allowFailure: opts.allowFailure, env: gitEnv(), input: opts.input });
 }
 
 function gitEnv() {
 	const name = process.env.GIT_AUTHOR_NAME ?? "Git4agents";
 	const email = process.env.GIT_AUTHOR_EMAIL ?? "git4agents@madgrix.invalid";
-	return minimalEnv({
+	return ({
 		GIT_AUTHOR_NAME: name,
 		GIT_AUTHOR_EMAIL: email,
 		GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? name,
@@ -311,15 +310,9 @@ function gitEnv() {
  * @returns {string[]}
  */
 function porcelainPaths(status) {
-	/** @type {string[]} */
-	const files = [];
-	for (const line of status.split("\n")) {
-		if (!line.trim()) continue;
-		const pathPart = line.slice(3).trim();
-		const renamed = pathPart.split(" -> ");
-		files.push(renamed[renamed.length - 1]);
-	}
-	return files;
+	// `status -z --no-renames`: unquoted names, and a rename is its deletion
+	// plus its addition, so both paths are scope-checked.
+	return porcelainZPaths(status);
 }
 
 
@@ -345,6 +338,53 @@ function blobText(repo, sha, file) {
  * @returns {string | null}
  */
 function mergeDisjointEdits(repo, baseline, file, group) {
+	const merged = mergeDisjoint(repo, baseline, file, group);
+	return merged === null ? null : merged.text;
+}
+
+const REGULAR_MODES = new Set(["100644", "100755"]);
+
+/**
+ * Three-way merge of the file mode. A side that left the mode alone defers to
+ * a side that changed it; two sides that changed it differently conflict.
+ * Anything but a regular file (symlink, gitlink) on a shared path conflicts.
+ * Returns the mode, `null` when every side deleted the path, or `undefined`
+ * on a conflict.
+ * @param {string} repo
+ * @param {string} baseline
+ * @param {string} file
+ * @param {Array<{ sha: string }>} group
+ * @returns {string | null | undefined}
+ */
+function mergedMode(repo, baseline, file, group) {
+	const base = modeAt(repo, baseline, file);
+	const modes = group.map((owner) => modeAt(repo, owner.sha, file));
+	if (modes.every((mode) => mode === null)) return null;
+	if (modes.some((mode) => mode === null)) return undefined;
+	if ([base, ...modes].some((mode) => mode !== null && !REGULAR_MODES.has(mode))) return undefined;
+	const changed = [...new Set(modes.filter((mode) => mode !== base))];
+	if (changed.length > 1) return undefined;
+	return changed[0] ?? base ?? "100644";
+}
+
+/**
+ * Text and mode merge; null on any conflict. `mode: null` means every side
+ * deleted the path.
+ * @param {string} repo
+ * @param {string} baseline
+ * @param {string} file
+ * @param {Array<{ sha: string }>} group
+ * @returns {{ text: string, mode: string | null } | null}
+ */
+function mergeDisjoint(repo, baseline, file, group) {
+	const mode = mergedMode(repo, baseline, file, group);
+	if (mode === undefined) {
+		// A delete on one side and an edit on the other, or a mode clash.
+		// Every side deleting is clean; an unchanged-content delete still
+		// conflicts so the edit is never silently dropped.
+		return null;
+	}
+	if (mode === null) return { text: "", mode: null };
 	const base = blobText(repo, baseline, file);
 	let merged = blobText(repo, group[0].sha, file);
 	for (let i = 1; i < group.length; i += 1) {
@@ -353,7 +393,7 @@ function mergeDisjointEdits(repo, baseline, file, group) {
 		if (!step.clean) return null;
 		merged = step.text;
 	}
-	return merged;
+	return { text: merged, mode };
 }
 
 /**
@@ -374,6 +414,7 @@ export function threeWayMerge(base, ours, theirs, spawn = spawnSync) {
 		const result = spawn("git", ["merge-file", "-p", "ours", "base", "theirs"], {
 			cwd: dir,
 			encoding: "utf8",
+			maxBuffer: GIT_MAX_BUFFER,
 			env: minimalEnv(),
 		});
 		if (result.error || (result.status ?? 1) < 0) {
@@ -432,7 +473,7 @@ export function conflictHunks(base, ours, theirs, spawn = spawnSync) {
 		const result = spawn(
 			"git",
 			["merge-file", "-p", "--diff3", `--marker-size=${HUNK_MARKER_SIZE}`, "-L", "ours", "-L", "base", "-L", "theirs", "ours", "base", "theirs"],
-			{ cwd: dir, encoding: "utf8", env: minimalEnv() },
+			{ cwd: dir, encoding: "utf8", maxBuffer: GIT_MAX_BUFFER, env: minimalEnv() },
 		);
 		if (result.error || (result.status ?? -1) < 0) return null;
 		output = result.stdout ?? "";
@@ -551,7 +592,9 @@ function classifyEdits(repo, baseline, commits) {
 	/** @type {Map<string, SubCommit[]>} */
 	const owners = new Map();
 	for (const commit of commits) {
-		const names = git(repo, ["diff", "--name-only", baseline, commit.sha]).stdout.split("\n").filter(Boolean);
+		// -z: unquoted names (a non-ASCII path is not C-quoted). --no-renames: a
+		// rename is a deletion plus an addition, so both paths are owned.
+		const names = splitZ(git(repo, ["diff", "--name-only", "-z", "--no-renames", baseline, commit.sha]).stdout);
 		if (names.length === 0) throw new Error(`${commit.id} changed no files`);
 		for (const file of names) {
 			if (file === RECORD_PATH || file === CONFLICT_PATH || file.startsWith(".madgrix/sides/")) continue;
@@ -567,7 +610,7 @@ function classifyEdits(repo, baseline, commits) {
 	const conflicts = [];
 	for (const [file, group] of owners) {
 		if (group.length < 2) continue;
-		if (mergeDisjointEdits(repo, baseline, file, group) === null) conflicts.push({ path: file, group });
+		if (mergeDisjoint(repo, baseline, file, group) === null) conflicts.push({ path: file, group });
 	}
 	return { owners, conflicts };
 }
@@ -709,7 +752,8 @@ function commitIndex(repo, baseline, commits, record, message) {
 	const tree = git(repo, ["write-tree"]).stdout.trim();
 	const parentArgs = ["-p", baseline, ...commits.flatMap((commit) => ["-p", commit.sha])];
 	const sha = git(repo, ["commit-tree", tree, ...parentArgs, "-m", message]).stdout.trim();
-	git(repo, ["checkout", "-B", "main", sha]);
+	// Detached at the new commit; main moves only through publishMain (CAS).
+	git(repo, ["update-ref", "--no-deref", "HEAD", sha]);
 	return sha;
 }
 
@@ -728,16 +772,73 @@ function commitIndex(repo, baseline, commits, record, message) {
 function applyCleanEdits(repo, baseline, owners, skip = new Set()) {
 	for (const [file, group] of owners) {
 		if (skip.has(file)) continue;
-		mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
 		if (group.length === 1) {
+			if (modeAt(repo, group[0].sha, file) === null) {
+				// The agent deleted (or renamed away) this path.
+				removePath(repo, file);
+				continue;
+			}
+			mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
 			git(repo, ["checkout", group[0].sha, "--", file]);
 			continue;
 		}
-		const merged = mergeDisjointEdits(repo, baseline, file, group);
+		const merged = mergeDisjoint(repo, baseline, file, group);
 		if (merged === null) throw new Error(`combine lost a conflict on ${file}`);
-		writeFileSync(path.join(repo, file), merged);
+		if (merged.mode === null) {
+			removePath(repo, file);
+			continue;
+		}
+		writeLeafFile(repo, file, merged.text, merged.mode);
 		git(repo, ["add", "--", file]);
+		git(repo, ["update-index", `--chmod=${merged.mode === "100755" ? "+x" : "-x"}`, "--", file]);
 	}
+}
+
+/**
+ * Stage the given files (one `git add` for all) and set each one's exec bit
+ * in the index from its mode. A null mode (absent file) is skipped.
+ * @param {string} repo
+ * @param {Map<string, string | null>} modes
+ */
+function stageWithModes(repo, modes) {
+	const present = [...modes].filter(([, mode]) => mode !== null);
+	if (present.length === 0) return;
+	const nul = (/** @type {string[]} */ files) => files.map((file) => `${file}\0`).join("");
+	git(repo, ["add", "--pathspec-from-file=-", "--pathspec-file-nul"], { input: nul(present.map(([file]) => file)) });
+	for (const [flag, want] of [["+x", "100755"], ["-x", "100644"]]) {
+		const files = present.filter(([, mode]) => mode === want).map(([file]) => file);
+		if (files.length > 0) git(repo, ["update-index", `--chmod=${flag}`, "-z", "--stdin"], { input: nul(files) });
+	}
+}
+
+/**
+ * @param {string} repo
+ * @param {string} file
+ */
+function removePath(repo, file) {
+	git(repo, ["rm", "-q", "--cached", "--ignore-unmatch", "--", file]);
+	rmSync(path.join(repo, file), { force: true });
+}
+
+/**
+ * Write `file` under `repo`, refusing to follow a symlinked parent out of the
+ * repository, and set its exec bit from `mode`.
+ * @param {string} repo
+ * @param {string} file
+ * @param {string | Buffer} content
+ * @param {string} mode
+ */
+function writeLeafFile(repo, file, content, mode) {
+	const full = path.join(repo, file);
+	mkdirSync(path.dirname(full), { recursive: true });
+	const root = realpathSync(repo);
+	const parent = realpathSync(path.dirname(full));
+	if (parent !== root && !parent.startsWith(`${root}${path.sep}`)) {
+		throw new Error(`${file} resolves outside the repository`);
+	}
+	rmSync(full, { force: true, recursive: false });
+	writeFileSync(full, content, { flag: "wx" });
+	chmodSync(full, mode === "100755" ? 0o755 : 0o644);
 }
 
 /**
@@ -748,8 +849,9 @@ function applyCleanEdits(repo, baseline, owners, skip = new Set()) {
  * @param {string} repo
  * @param {string} baseline
  * @param {SubCommit[]} commits
+ * @param {string | null} [expectedMain] main before the crew (CAS expected value); default the baseline
  */
-export function combineSubagentBranches(repo, baseline, commits) {
+export function combineSubagentBranches(repo, baseline, commits, expectedMain = baseline) {
 	const { owners, conflicts } = classifyEdits(repo, baseline, commits);
 	if (conflicts.length > 0) {
 		const conflict = conflictRecord(repo, baseline, commits, conflicts);
@@ -762,7 +864,8 @@ export function combineSubagentBranches(repo, baseline, commits) {
 			conflict,
 		};
 	}
-	git(repo, ["checkout", "-B", "main", baseline]);
+	restoreCheckout(repo, baseline);
+	git(repo, ["checkout", "--quiet", "--detach", "-f", baseline]);
 	git(repo, ["read-tree", baseline]);
 	applyCleanEdits(repo, baseline, owners);
 	const record = {
@@ -779,6 +882,12 @@ export function combineSubagentBranches(repo, baseline, commits) {
 		record,
 		`MADGRIX compose\n\n${commits.map((commit) => `${commit.id}: ${commit.intent}`).join("\n")}`,
 	);
+	try {
+		publishMain(repo, sha, expectedMain);
+	} catch (error) {
+		restoreCheckout(repo, baseline);
+		throw error;
+	}
 	return {
 		status: /** @type {const} */ ("COMPOSED"),
 		sha,
@@ -862,32 +971,172 @@ export function verifyFrozenBaseline(repo, baseline) {
  * @param {(repo: string, baseline: string) => void | { final: string, exit: number }} [verify]
  */
 export async function runCrewOnFork(repo, crew, runSub, verify = verifyFrozenBaseline) {
-	const baseline = git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-	/** @type {Array<{ sub: ReturnType<typeof loadForkCrew>["subs"][number], wt: string }>} */
-	const prepared = crew.subs.map((sub) => {
-		const wt = mkdtempSync(path.join(os.tmpdir(), `madgrix-${sub.id}-`));
-		git(repo, ["worktree", "add", "--quiet", "-b", `madgrix/${sub.id}`, wt, baseline]);
-		return { sub, wt };
+	const { baseline, mainBefore } = withRepoLock(repo, () => {
+		const head = git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+		const main = readMain(repo);
+		// The crew composes onto main. A checkout whose HEAD is not main (for
+		// example left behind while another crew published) would compose onto
+		// a stale commit; refuse instead of silently dropping that work.
+		if (main !== null && main !== head) {
+			throw new Error(`HEAD (${head}) is not main (${main}); check out main before running a crew`);
+		}
+		return { baseline: head, mainBefore: main };
 	});
+	/** @type {Array<{ sub: ReturnType<typeof loadForkCrew>["subs"][number], wt: string, adminDir: string }>} */
+	const prepared = [];
+	/** @type {ReturnType<typeof snapshotControlFiles> | null} */
+	let guard = null;
 	/** @type {SubCommit[]} */
 	let commits = [];
+	const run = `${Date.now().toString(36)}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 	try {
+		withRepoLock(repo, () => {
+			for (const sub of crew.subs) {
+				const wt = mkdtempSync(path.join(os.tmpdir(), `madgrix-${sub.id}-`));
+				// Detached: a re-run with the same agent ids, or a concurrent crew,
+				// does not trip over a leftover madgrix/<id> branch.
+				git(repo, ["worktree", "add", "--quiet", "--detach", wt, baseline]);
+				// The worktree's admin dir, read before the agent runs: the agent
+				// can rewrite wt/.git to point anywhere, so control-plane git in the
+				// worktree uses this GIT_DIR explicitly.
+				const adminDir = path.resolve(wt, git(wt, ["rev-parse", "--git-dir"]).stdout.trim());
+				prepared.push({ sub, wt, adminDir });
+			}
+			guard = snapshotControlFiles(repo, { worktrees: prepared.map((p) => path.basename(p.adminDir)) });
+		});
 		await Promise.all(prepared.map(({ sub, wt }) => (runSub ? runSub(sub, wt) : runConfiguredCommand(sub, wt))));
-		commits = prepared.map(({ sub, wt }) => commitWorktree(sub, wt));
-	} finally {
-		for (const { wt } of prepared) {
-			git(repo, ["worktree", "remove", "--force", wt], { allowFailure: true });
-			rmSync(wt, { recursive: true, force: true });
+		// A sub-agent shares the repository's git dir. Config (filters, includes,
+		// fsmonitor, worktreeConfig), hooks, attributes or alternates it wrote
+		// would run inside the next control-plane git call; refuse the crew and
+		// put the files back first.
+		const g = /** @type {ReturnType<typeof snapshotControlFiles>} */ (/** @type {unknown} */ (guard));
+		const tampered = withRepoLock(repo, () => {
+			const changed = changedControlFiles(g);
+			if (changed.length > 0) restoreControlFiles(g);
+			return changed;
+		});
+		if (tampered.length > 0) {
+			throw new Error(`a sub-agent changed repository control files (${tampered.join(", ")}); the crew is refused and the files were restored`);
 		}
+		commits = prepared.map(({ sub, wt, adminDir }) => commitWorktree(sub, wt, adminDir));
+		withRepoLock(repo, () => {
+			for (const commit of commits) git(repo, ["update-ref", `refs/madgrix/runs/${run}/${commit.id}`, commit.sha]);
+		});
+	} finally {
+		withRepoLock(repo, () => {
+			for (const { wt } of prepared) {
+				git(repo, ["worktree", "remove", "--force", wt], { allowFailure: true });
+				rmSync(wt, { recursive: true, force: true });
+			}
+			git(repo, ["worktree", "prune"], { allowFailure: true });
+		});
 	}
 	// The gate's FINAL line is carried in the result so the live log can print
 	// TheUstad's verdict (a throwing gate never reaches this point).
 	const theustad = verify(repo, baseline) ?? null;
-	const combined = combineSubagentBranches(repo, baseline, commits);
-	return { baseline, commits, theustad, ...combined };
+	const combined = withRepoLock(repo, () => combineSubagentBranches(repo, baseline, commits, mainBefore));
+	return { baseline, main_before: mainBefore, run_ref: `${RUN_REF_ROOT}/${run}`, commits, theustad, ...combined };
+}
+
+export const RUN_REF_ROOT = "refs/madgrix/runs";
+
+/**
+ * Delete a run's refs/madgrix/runs/<run>/* refs (its sub-agent commits).
+ * @param {string} repo
+ * @param {string} runRef
+ */
+export function deleteRunRefs(repo, runRef) {
+	if (!runRef.startsWith(`${RUN_REF_ROOT}/`)) throw new Error(`not a run ref: ${runRef}`);
+	return withRepoLock(repo, () => {
+		const refs = splitZ(git(repo, ["for-each-ref", "--format=%(refname)%00", `${runRef}/`]).stdout).map((r) => r.trim()).filter(Boolean);
+		for (const ref of refs) git(repo, ["update-ref", "-d", ref]);
+		return refs;
+	});
+}
+
+/**
+ * Prune run refs older than `olderThanMs` (by the timestamp in the run id).
+ * Runs that did not publish keep their refs for forensics until pruned.
+ * @param {string} repo
+ * @param {{ olderThanMs?: number, now?: number }} [opts]
+ */
+export function pruneRunRefs(repo, opts = {}) {
+	const now = opts.now ?? Date.now();
+	const olderThan = opts.olderThanMs ?? 0;
+	return withRepoLock(repo, () => {
+		const refs = splitZ(git(repo, ["for-each-ref", "--format=%(refname)%00", `${RUN_REF_ROOT}/`]).stdout).map((r) => r.trim()).filter(Boolean);
+		/** @type {string[]} */
+		const pruned = [];
+		for (const ref of refs) {
+			const run = ref.slice(RUN_REF_ROOT.length + 1).split("/")[0];
+			const born = parseInt(run.split("-")[0], 36);
+			if (Number.isFinite(born) && now - born < olderThan) continue;
+			git(repo, ["update-ref", "-d", ref]);
+			pruned.push(ref);
+		}
+		return pruned;
+	});
 }
 
 export const RESOLUTION_LEASE_VERSION = "madgrix-resolution-lease/v1";
+
+/**
+ * Marker lines git writes into a conflicted file.
+ * @param {string} line
+ */
+function isMarkerLine(line) {
+	return /^(<{7}|>{7}|\|{7})( |$)/.test(line) || /^={7}$/.test(line);
+}
+
+/**
+ * Marker lines in `text` that are not already lines of the base or of a side
+ * (a file that legitimately contains a marker line keeps it).
+ * @param {string} text
+ * @param {string[]} sources
+ */
+export function strayConflictMarkers(text, sources) {
+	const known = new Set(sources.flatMap((source) => source.split(/\r?\n/)).filter(isMarkerLine));
+	return text.split(/\r?\n/).filter((line) => isMarkerLine(line) && !known.has(line));
+}
+
+/**
+ * Every non-directory entry under `dir`, relative, with lstat.
+ * @param {string} dir
+ * @param {string} [rel]
+ * @returns {Array<{ rel: string, stat: import("node:fs").Stats }>}
+ */
+function walkEntries(dir, rel = "") {
+	/** @type {Array<{ rel: string, stat: import("node:fs").Stats }>} */
+	const out = [];
+	for (const name of readdirSync(path.join(dir, rel))) {
+		const child = rel === "" ? name : `${rel}/${name}`;
+		const stat = lstatSync(path.join(dir, child));
+		if (stat.isDirectory()) out.push(...walkEntries(dir, child));
+		else out.push({ rel: child, stat });
+	}
+	return out;
+}
+
+/**
+ * Digest of what a resolver must not touch in the authority repository: its
+ * config, hooks and info files, refs, and working-tree status.
+ * @param {string} repo
+ */
+function repoFingerprint(repo) {
+	const hash = createHash("sha256");
+	// Linked-worktree admin dirs belong to running crews; the resolver cannot
+	// reach them (its cwd is not a worktree) and they change concurrently.
+	const snap = snapshotControlFiles(repo, { worktrees: [] });
+	for (const [rel, value] of [...snap.files].sort(([a], [b]) => (a < b ? -1 : 1))) hash.update(`${rel}\0${value}\0`);
+	// main and run refs move under other crews' CAS publishes; every other ref
+	// must stay put.
+	const refs = git(repo, ["for-each-ref", "--format=%(refname) %(objectname)"]).stdout
+		.split("\n")
+		.filter((line) => line && !line.startsWith("refs/heads/main ") && !line.startsWith(`${RUN_REF_ROOT}/`));
+	hash.update(refs.join("\n"));
+	hash.update(git(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "-uall"]).stdout);
+	return hash.digest("hex");
+}
 
 /**
  * Apply a resolver command to a CONFLICTED crew result under a resolution
@@ -920,7 +1169,10 @@ export const RESOLUTION_LEASE_VERSION = "madgrix-resolution-lease/v1";
  * @param {string} repo
  * @param {{ status: string, baseline: string, commits: SubCommit[], conflict: ReturnType<typeof conflictRecord> | null }} crewResult
  * @param {string} command
- * @param {{ env?: Record<string, string>, resolver?: { id: string, rung: string, order?: string | null } }} [opts]
+ * `opts.timeoutMs` (default MADGRIX_RESOLVER_TIMEOUT_MS, else 10 minutes)
+ * bounds the resolver; it and everything it started are killed at the end.
+ *
+ * @param {{ env?: Record<string, string>, resolver?: { id: string, rung: string, order?: string | null }, timeoutMs?: number }} [opts]
  */
 export function resolveComposition(repo, crewResult, command, opts = {}) {
 	if (crewResult.status !== "CONFLICTED" || crewResult.conflict === null) {
@@ -933,14 +1185,31 @@ export function resolveComposition(repo, crewResult, command, opts = {}) {
 			throw new Error(`resolver environment may not set ${name}`);
 		}
 	}
+	return withRepoLock(repo, () => resolveLocked(repo, crewResult, command, extraEnv, opts));
+}
+
+/** Joined leased paths up to this size are also passed in MADGRIX_LEASED_PATHS. */
+const LEASED_PATHS_ENV_MAX = 32 * 1024;
+
+/**
+ * @param {string} repo
+ * @param {Parameters<typeof resolveComposition>[1]} crewResult
+ * @param {string} command
+ * @param {Record<string, string>} extraEnv
+ * @param {NonNullable<Parameters<typeof resolveComposition>[3]>} opts
+ */
+function resolveLocked(repo, crewResult, command, extraEnv, opts) {
 	const resolver = opts.resolver ?? { id: "command", rung: "command", order: null };
 	const baseline = crewResult.baseline;
-	const leasedPaths = crewResult.conflict.files.map((file) => file.path);
+	const recorded = crewResult.conflict;
+	if (recorded === null) throw new Error("resolveComposition requires a CONFLICTED result");
+	const leasedPaths = recorded.files.map((file) => file.path);
 	const leased = new Set(leasedPaths);
 
-	git(repo, ["checkout", "-B", "main", baseline]);
-	git(repo, ["reset", "--hard", baseline]);
-	git(repo, ["clean", "-fd"]);
+	// Detached at the baseline: resolving never moves main.
+	git(repo, ["checkout", "--quiet", "--detach", "-f", baseline]);
+	git(repo, ["reset", "--quiet", "--hard", baseline]);
+	git(repo, ["clean", "-fdq"]);
 	// The lease is derived from the crew's commits, not trusted from the record:
 	// a record that names a path the commits do not conflict on (or omits one)
 	// would widen or shrink what the resolver may write. The hunks are derived
@@ -955,23 +1224,43 @@ export function resolveComposition(repo, crewResult, command, opts = {}) {
 	}
 	const conflict = conflictRecord(repo, baseline, crewResult.commits, conflicts);
 	applyCleanEdits(repo, baseline, owners, leased);
+	/** @type {Map<string, string | null>} leased path -> mode of its precomposed file, null when absent */
+	const leaseMode = new Map();
 	for (const file of conflict.files) {
-		const full = path.join(repo, file.path);
-		mkdirSync(path.dirname(full), { recursive: true });
+		const group = conflicts.find((c) => c.path === file.path)?.group ?? [];
 		const text = precomposedText(file);
-		if (text === "" && file.base === "" && file.segments === null) rmSync(full, { force: true });
-		else writeFileSync(full, text);
+		if (text === "" && file.base === "" && file.segments === null) {
+			removePath(repo, file.path);
+			leaseMode.set(file.path, null);
+			continue;
+		}
+		// The precomposed file's mode: the baseline's, or the sides' mode when
+		// they all agree on a regular file (a new file, or an agreed +x).
+		const sideModes = [...new Set(group.map((owner) => modeAt(repo, owner.sha, file.path)))];
+		const baseMode = modeAt(repo, baseline, file.path);
+		let mode = baseMode !== null && REGULAR_MODES.has(baseMode) ? baseMode : "100644";
+		if (sideModes.length === 1 && sideModes[0] !== null && REGULAR_MODES.has(sideModes[0])) mode = sideModes[0];
+		writeLeafFile(repo, file.path, text, mode);
+		leaseMode.set(file.path, mode);
 	}
+	stageWithModes(repo, leaseMode);
 	git(repo, ["add", "-A"]);
 	const precomposedTree = git(repo, ["write-tree"]).stdout.trim();
 
 	/** @type {Array<{ path: string, index: number, base_sha256: string, resolution_sha256: string }>} */
 	const resolvedHunks = [];
+	// The resolver never runs in the authority repository. It gets a throwaway
+	// directory holding only the leased files (no .git, no other file), and its
+	// inputs in a second directory. Its output is checked there and only then
+	// copied into the repository.
 	const inputs = mkdtempSync(path.join(os.tmpdir(), "madgrix-resolve-"));
+	const work = mkdtempSync(path.join(os.tmpdir(), "madgrix-resolve-work-"));
 	const sidesDir = path.join(inputs, "sides");
 	try {
 		const conflictFile = path.join(inputs, "conflict.json");
 		writeFileSync(conflictFile, `${JSON.stringify(conflict, null, 2)}\n`);
+		const leasedPathsFile = path.join(inputs, "leased-paths.json");
+		writeFileSync(leasedPathsFile, `${JSON.stringify(leasedPaths)}\n`);
 		for (const file of conflict.files) {
 			for (const side of file.sides) {
 				const dest = path.resolve(sidesDir, side.agent_id, file.path);
@@ -981,42 +1270,66 @@ export function resolveComposition(repo, crewResult, command, opts = {}) {
 				mkdirSync(path.dirname(dest), { recursive: true });
 				writeFileSync(dest, side.text);
 			}
+			const mode = leaseMode.get(file.path);
+			const dest = path.resolve(work, file.path);
+			if (!dest.startsWith(`${work}${path.sep}`)) throw new Error(`leased path ${file.path} escapes the resolver work directory`);
+			if (mode === null || mode === undefined) continue;
+			mkdirSync(path.dirname(dest), { recursive: true });
+			writeFileSync(dest, readFileSync(path.join(repo, file.path)));
+			chmodSync(dest, mode === "100755" ? 0o755 : 0o644);
 		}
-		const result = spawnSync("bash", ["-c", command], {
-			cwd: repo,
-			encoding: "utf8",
+		const joined = leasedPaths.join("\n");
+		const before = repoFingerprint(repo);
+		const result = runContained({
+			command,
+			cwd: work,
+			writable: [work],
+			readOnly: [inputs],
+			timeoutMs: opts.timeoutMs ?? (Number(process.env.MADGRIX_RESOLVER_TIMEOUT_MS) || DEFAULT_RESOLVER_TIMEOUT_MS),
 			env: minimalEnv({
 				...extraEnv,
 				MADGRIX_CONFLICT_PATH: conflictFile,
 				MADGRIX_SIDES_DIR: sidesDir,
 				MADGRIX_BASELINE_SHA: baseline,
-				MADGRIX_LEASED_PATHS: leasedPaths.join("\n"),
+				MADGRIX_LEASED_PATHS_FILE: leasedPathsFile,
+				...(Buffer.byteLength(joined) <= LEASED_PATHS_ENV_MAX ? { MADGRIX_LEASED_PATHS: joined } : {}),
 			}),
 		});
+		if (repoFingerprint(repo) !== before) {
+			throw new Error("resolver modified the authority repository (config, hooks, refs or working tree)");
+		}
+		if (result.timedOut) throw new Error("resolver timed out");
 		if (result.error || (result.status ?? 1) !== 0) {
-			const detail = (result.stderr ?? "").trim().split("\n").slice(-1)[0];
-			throw new Error(`resolver exited ${result.status ?? "signal"}${detail ? `: ${detail}` : ""}`);
+			const detail = result.error ?? result.stderrTail;
+			throw new Error(`resolver exited ${result.status ?? `signal ${result.signal ?? "unknown"}`}${detail ? `: ${detail}` : ""}`);
 		}
-		git(repo, ["add", "-A"]);
-		const changed = git(repo, ["diff-index", "--cached", "--name-only", "--no-renames", precomposedTree])
-			.stdout.split("\n")
-			.filter(Boolean);
-		const outside = changed.filter((file) => !leased.has(file));
-		if (outside.length > 0) {
-			throw new Error(`resolver changed ${outside.join(", ")}, outside its lease (${leasedPaths.join(", ")})`);
+		// Only leased paths, and only regular files, may exist in the work dir.
+		const entries = walkEntries(work);
+		const strays = entries.filter((entry) => !leased.has(entry.rel)).map((entry) => entry.rel).sort();
+		if (strays.length > 0) {
+			throw new Error(`resolver changed ${strays.join(", ")}, outside its lease (${leasedPaths.join(", ")})`);
 		}
-		if (changed.length === 0) throw new Error("resolver produced no change");
+		for (const entry of entries) {
+			if (!entry.stat.isFile()) throw new Error(`resolver left ${entry.rel} as something other than a regular file`);
+		}
+		/** @type {Map<string, Buffer>} */
+		const output = new Map();
 		for (const file of conflict.files) {
-			let onDisk = "";
+			const full = path.join(work, file.path);
+			let stat;
 			try {
-				onDisk = readFileSync(path.join(repo, file.path), "utf8");
+				stat = lstatSync(full);
 			} catch {
 				throw new Error(`resolver left ${file.path} unresolved`);
 			}
-			if (onDisk.includes("<<<<<<<") || onDisk.includes(">>>>>>>")) {
-				throw new Error(`resolver left conflict markers in ${file.path}`);
-			}
-			if (!changed.includes(file.path)) throw new Error(`resolver left ${file.path} unresolved`);
+			if (!stat.isFile()) throw new Error(`resolver left ${file.path} as something other than a regular file`);
+			const expected = leaseMode.get(file.path) ?? "100644";
+			const exec = (stat.mode & 0o100) !== 0;
+			if (exec !== (expected === "100755")) throw new Error(`resolver changed the mode of ${file.path}`);
+			const bytes = readFileSync(full);
+			const onDisk = bytes.toString("utf8");
+			const stray = strayConflictMarkers(onDisk, [file.base, ...file.sides.map((side) => side.text)]);
+			if (stray.length > 0) throw new Error(`resolver left conflict markers in ${file.path}`);
 			if (file.segments !== null && file.hunks !== null) {
 				const fills = matchTemplate(file.segments, onDisk);
 				if (fills === null) {
@@ -1031,13 +1344,31 @@ export function resolveComposition(repo, crewResult, command, opts = {}) {
 					});
 				});
 			}
+			output.set(file.path, bytes);
+		}
+		for (const [file, bytes] of output) writeLeafFile(repo, file, bytes, leaseMode.get(file) ?? "100644");
+		stageWithModes(repo, new Map([...output.keys()].map((file) => [file, leaseMode.get(file) ?? "100644"])));
+		git(repo, ["add", "-A"]);
+		const changes = parseRawZ(git(repo, ["diff-index", "--cached", "--raw", "-z", "--no-renames", precomposedTree]).stdout);
+		const changed = changes.map((change) => change.path);
+		const outside = changed.filter((file) => !leased.has(file));
+		if (outside.length > 0) {
+			throw new Error(`resolver changed ${outside.join(", ")}, outside its lease (${leasedPaths.join(", ")})`);
+		}
+		for (const change of changes) {
+			if (!REGULAR_MODES.has(change.dstMode)) throw new Error(`resolver left ${change.path} as something other than a regular file`);
+			if (change.srcMode !== "000000" && change.srcMode !== change.dstMode) throw new Error(`resolver changed the mode of ${change.path}`);
+		}
+		if (changed.length === 0) throw new Error("resolver produced no change");
+		for (const file of conflict.files) {
+			if (!changed.includes(file.path)) throw new Error(`resolver left ${file.path} unresolved`);
 		}
 	} catch (error) {
-		git(repo, ["reset", "--hard", baseline], { allowFailure: true });
-		git(repo, ["clean", "-fd"], { allowFailure: true });
+		restoreCheckout(repo, baseline);
 		throw error;
 	} finally {
 		rmSync(inputs, { recursive: true, force: true });
+		rmSync(work, { recursive: true, force: true });
 	}
 	const lease = {
 		format: RESOLUTION_LEASE_VERSION,
@@ -1051,7 +1382,7 @@ export function resolveComposition(repo, crewResult, command, opts = {}) {
 		resolution: "RESOLVED",
 		overlap: leasedPaths,
 		claims: claimRecord(crewResult.commits),
-		resolved_from: crewResult.conflict.contributing_shas,
+		resolved_from: recorded.contributing_shas,
 		lease,
 		resolver: { id: resolver.id, rung: resolver.rung, order: resolver.order ?? null },
 	};
@@ -1075,24 +1406,34 @@ export function resolveComposition(repo, crewResult, command, opts = {}) {
 /** Names a resolver environment may never carry. */
 const FORBIDDEN_RESOLVER_ENV = /SERVICE_TOKEN|AUTHORITY_SIGNING_KEY|CLOUDFLARE|^CF_/i;
 /** The lease's own inputs; a caller cannot override them. */
-const LEASE_ENV = new Set(["MADGRIX_CONFLICT_PATH", "MADGRIX_SIDES_DIR", "MADGRIX_BASELINE_SHA", "MADGRIX_LEASED_PATHS"]);
+const LEASE_ENV = new Set([
+	"MADGRIX_CONFLICT_PATH",
+	"MADGRIX_SIDES_DIR",
+	"MADGRIX_BASELINE_SHA",
+	"MADGRIX_LEASED_PATHS",
+	"MADGRIX_LEASED_PATHS_FILE",
+	"MADGRIX_SANDBOX_RUN",
+]);
 
 /**
  * @param {ReturnType<typeof loadForkCrew>["subs"][number]} sub
  * @param {string} wt
+ * @param {string} adminDir
  * @returns {SubCommit}
  */
-function commitWorktree(sub, wt) {
-	const files = porcelainPaths(git(wt, ["status", "--porcelain", "-uall"]).stdout);
+function commitWorktree(sub, wt, adminDir) {
+	/** @param {string[]} args */
+	const wgit = (args) => safeGit(wt, args, { env: { ...gitEnv(), GIT_DIR: adminDir, GIT_WORK_TREE: wt } });
+	const files = porcelainPaths(wgit(["status", "--porcelain=v1", "-z", "--no-renames", "-uall"]).stdout);
 	if (files.length === 0) throw new Error(`${sub.id} produced no change on the parent fork`);
 	for (const file of files) {
 		if (!pathInScope(file, sub.paths)) {
 			throw new Error(`${sub.id} changed ${file}, which is outside its role scope`);
 		}
 	}
-	git(wt, ["add", "-A"]);
-	git(wt, ["commit", "-m", `MADGRIX sub-agent ${sub.id}: ${sub.intent}`]);
-	const sha = git(wt, ["rev-parse", "HEAD"]).stdout.trim();
+	wgit(["add", "-A"]);
+	wgit(["commit", "--no-verify", "-m", `MADGRIX sub-agent ${sub.id}: ${sub.intent}`]);
+	const sha = wgit(["rev-parse", "HEAD"]).stdout.trim();
 	const claimed = /** @type {{ claim_work_id?: string | null }} */ (sub).claim_work_id ?? null;
 	return {
 		id: sub.id,

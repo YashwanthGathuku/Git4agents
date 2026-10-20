@@ -29,6 +29,7 @@
     "demo:memory": "node scripts/demo-memory.ts",
     "bench:memory": "node scripts/bench-memory.ts",
     "demo:resolution": "node scripts/demo-resolution.ts",
+    "prune:runs": "node scripts/prune-madgrix-runs.mjs",
     "bench:resolution": "node scripts/bench-resolution.mjs"
   },
   "type": "module",

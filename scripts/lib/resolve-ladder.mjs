@@ -27,6 +27,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { minimalEnv } from "./child-env.mjs";
+import { safeGit } from "./safe-git.mjs";
+import { publishMain, restoreCheckout } from "./main-ref.mjs";
 import { resolveComposition } from "./fork-crew.mjs";
 import { emptyWitnessReport, witnessReport } from "./witness.mjs";
 
@@ -66,7 +68,7 @@ export function findMergiraf(explicit = process.env.MERGIRAF_BIN) {
 export function sameLeasedText(repo, a, b, paths) {
 	for (const file of paths) {
 		const blob = (/** @type {string} */ sha) =>
-			spawnSync("git", ["rev-parse", `${sha}:${file}`], { cwd: repo, encoding: "utf8", env: minimalEnv() }).stdout.trim();
+			safeGit(repo, ["rev-parse", `${sha}:${file}`], { allowFailure: true }).stdout.trim();
 		if (blob(a) !== blob(b)) return false;
 	}
 	return true;
@@ -156,7 +158,8 @@ export function resolveWithLadder(repo, crewResult, opts) {
 	 * @param {"identical" | "behavioral" | null} agreement
 	 */
 	const admit = (chosen, agreement) => {
-		checkout(repo, chosen.resolved.sha);
+		const refused = publishCandidate(repo, crewResult, chosen.resolved.sha);
+		if (refused) return review(`the admitted candidate was not published: ${refused}`, [chosen]);
 		return {
 			status: /** @type {const} */ ("RESOLVED"),
 			sha: chosen.resolved.sha,
@@ -236,8 +239,8 @@ export function resolveWithCommand(repo, crewResult, command, opts) {
 			? witnessReport(repo, resolved.sha, opts.witnesses, opts.frozen, { requiredSides, capsuleId, timeoutMs: opts.timeoutMs })
 			: emptyWitnessReport(resolved.sha, requiredSides, capsuleId);
 	attempts.push({ rung: "command", order: null, sha: resolved.sha, error: null, verdict: witness.verdict, report_sha256: witness.sha256 });
-	if (witness.verdict === "ADMIT") {
-		checkout(repo, resolved.sha);
+	const refused = witness.verdict === "ADMIT" ? publishCandidate(repo, crewResult, resolved.sha) : null;
+	if (witness.verdict === "ADMIT" && refused === null) {
 		return {
 			status: /** @type {const} */ ("RESOLVED"),
 			sha: resolved.sha,
@@ -253,7 +256,7 @@ export function resolveWithCommand(repo, crewResult, command, opts) {
 	resetToBaseline(repo, crewResult.baseline);
 	return {
 		status: /** @type {const} */ ("REVIEW"),
-		reason: witness.verdict === "REFUSE" ? "the resolver command's candidate lost a side's witnessed intent" : "a conflicting side has no discriminating witness",
+		reason: refused ? `the admitted candidate was not published: ${refused}` : witness.verdict === "REFUSE" ? "the resolver command's candidate lost a side's witnessed intent" : "a conflicting side has no discriminating witness",
 		required_sides: requiredSides,
 		attempts,
 		candidates: [{ sha: resolved.sha, rung: "command", order: null, resolver_id: "command", lease: resolved.lease, witness }],
@@ -265,18 +268,26 @@ export function resolveWithCommand(repo, crewResult, command, opts) {
  * @param {string} baseline
  */
 function resetToBaseline(repo, baseline) {
-	for (const args of [["checkout", "-B", "main", baseline], ["reset", "--hard", baseline], ["clean", "-fd"]]) {
-		spawnSync("git", args, { cwd: repo, env: minimalEnv() });
-	}
+	// main was never moved for a CONFLICTED crew; only the checkout returns.
+	restoreCheckout(repo, baseline);
 }
 
 /**
+ * Publish an admitted candidate: main moves from the crew's main (CAS).
+ * Returns null on success, or the refusal message when main moved.
  * @param {string} repo
+ * @param {{ baseline: string, main_before?: string | null }} crewResult
  * @param {string} sha
  */
-function checkout(repo, sha) {
-	spawnSync("git", ["checkout", "-B", "main", sha], { cwd: repo, env: minimalEnv() });
-	spawnSync("git", ["reset", "--hard", sha], { cwd: repo, env: minimalEnv() });
+export function publishCandidate(repo, crewResult, sha) {
+	const expected = crewResult.main_before === undefined ? crewResult.baseline : crewResult.main_before;
+	try {
+		publishMain(repo, sha, expected);
+		return null;
+	} catch (error) {
+		restoreCheckout(repo, crewResult.baseline);
+		return /** @type {Error} */ (error).message;
+	}
 }
 
 /**
