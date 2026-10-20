@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 
 import { minimalEnv } from "./child-env.mjs";
 import { safeGit } from "./safe-git.mjs";
-import { publishMain, restoreCheckout } from "./main-ref.mjs";
+import { publishMain, publishWithRebase, restoreCheckout } from "./main-ref.mjs";
 import { resolveComposition } from "./fork-crew.mjs";
 import { emptyWitnessReport, witnessReport } from "./witness.mjs";
 
@@ -158,17 +158,22 @@ export function resolveWithLadder(repo, crewResult, opts) {
 	 * @param {"identical" | "behavioral" | null} agreement
 	 */
 	const admit = (chosen, agreement) => {
-		const refused = publishCandidate(repo, crewResult, chosen.resolved.sha);
-		if (refused) return review(`the admitted candidate was not published: ${refused}`, [chosen]);
+		const published = publishAdmitted(repo, crewResult, chosen.resolved.sha, (sha) => {
+			const witness = gate(sha);
+			return { ok: witness.verdict === "ADMIT", reason: `witnesses ${witness.verdict}`, witness };
+		});
+		if (!published.ok) return review(`the admitted candidate was not published: ${published.reason}`, [chosen]);
 		return {
 			status: /** @type {const} */ ("RESOLVED"),
-			sha: chosen.resolved.sha,
+			sha: published.sha,
+			published_base: published.base,
+			rebases: published.rebases,
 			rung: chosen.resolved.resolver.rung,
 			order: chosen.resolved.resolver.order,
 			resolver_id: chosen.resolved.resolver.id,
 			order_agreement: agreement,
 			lease: chosen.resolved.lease,
-			witness: chosen.witness,
+			witness: published.witness ?? chosen.witness,
 			attempts,
 		};
 	};
@@ -239,17 +244,28 @@ export function resolveWithCommand(repo, crewResult, command, opts) {
 			? witnessReport(repo, resolved.sha, opts.witnesses, opts.frozen, { requiredSides, capsuleId, timeoutMs: opts.timeoutMs })
 			: emptyWitnessReport(resolved.sha, requiredSides, capsuleId);
 	attempts.push({ rung: "command", order: null, sha: resolved.sha, error: null, verdict: witness.verdict, report_sha256: witness.sha256 });
-	const refused = witness.verdict === "ADMIT" ? publishCandidate(repo, crewResult, resolved.sha) : null;
-	if (witness.verdict === "ADMIT" && refused === null) {
+	const published =
+		witness.verdict === "ADMIT"
+			? publishAdmitted(repo, crewResult, resolved.sha, (sha) => {
+					const w = opts.witnesses && opts.frozen
+						? witnessReport(repo, sha, opts.witnesses, opts.frozen, { requiredSides, capsuleId, timeoutMs: opts.timeoutMs })
+						: emptyWitnessReport(sha, requiredSides, capsuleId);
+					return { ok: w.verdict === "ADMIT", reason: `witnesses ${w.verdict}`, witness: w };
+				})
+			: null;
+	const refused = published && !published.ok ? published.reason : null;
+	if (published && published.ok) {
 		return {
 			status: /** @type {const} */ ("RESOLVED"),
-			sha: resolved.sha,
+			sha: published.sha,
+			published_base: published.base,
+			rebases: published.rebases,
 			rung: "command",
 			order: null,
 			resolver_id: "command",
 			order_agreement: null,
 			lease: resolved.lease,
-			witness,
+			witness: published.witness ?? witness,
 			attempts,
 		};
 	}
@@ -288,6 +304,24 @@ export function publishCandidate(repo, crewResult, sha) {
 		restoreCheckout(repo, crewResult.baseline);
 		return /** @type {Error} */ (error).message;
 	}
+}
+
+/**
+ * Publish an admitted candidate with compare-and-swap. When another run moved
+ * main, the candidate is rebased onto the new main and published only if
+ * `reverify` (the witness gate on the rebased commit) admits it again, at
+ * most MADGRIX_MAIN_REBASE_RETRIES times (default 3; 0 refuses at once).
+ * @template W
+ * @param {string} repo
+ * @param {{ baseline: string, main_before?: string | null }} crewResult
+ * @param {string} sha
+ * @param {(sha: string) => { ok: boolean, reason?: string, witness?: W }} reverify
+ */
+export function publishAdmitted(repo, crewResult, sha, reverify) {
+	const expected = crewResult.main_before === undefined ? crewResult.baseline : crewResult.main_before;
+	const result = publishWithRebase(repo, sha, expected, { reverify });
+	if (!result.ok) restoreCheckout(repo, crewResult.baseline);
+	return result;
 }
 
 /**

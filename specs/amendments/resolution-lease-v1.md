@@ -99,6 +99,11 @@ nothing else.
    `core.fsmonitor=false`, no system or global config, and NUL-separated path
    output (`-z`, no rename detection). Witness trees are written with a
    private index and `checkout-index`, not `worktree add`, so no hook runs.
+   Witness replays run candidate code and are contained like the resolver
+   (item 6, `purpose: "witness"`): bubblewrap is required, only the witness's
+   own checkout is writable, and when bubblewrap is unavailable the replay
+   throws and nothing is admitted. `MADGRIX_WITNESS_SANDBOX` overrides
+   `MADGRIX_RESOLVER_SANDBOX` for witnesses; `none` needs the same opt-in.
 9. Control-plane steps that move `main` or write the working tree of one
    repository hold `.git/madgrix-control.lock` (stale locks of dead pids are
    taken over). Sub-agent worktrees are detached; their commits are kept under
@@ -109,14 +114,30 @@ nothing else.
 10. `main` moves only by compare-and-swap (`git update-ref refs/heads/main
     <new> <expected>`, scripts/lib/main-ref.mjs). The expected value is main
     when the crew started. A crew refuses to start when HEAD is not main. A
-    composition whose publish finds main moved throws `MainMovedError`; an
-    admitted resolution whose publish finds main moved is REVIEW ("main
-    moved"); a refused COMPOSED candidate is taken back off main only if main
-    is still at it. All other steps work on a detached HEAD.
+    composition or admitted resolution whose publish finds main moved is
+    rebased onto the new main (`rebaseCandidate`: a three-way tree merge with
+    the old base as merge base; files under `.madgrix/` are the candidate's;
+    the new commit's parents are the new main and the sub-agent commits) and
+    tried again, at most `MADGRIX_MAIN_REBASE_RETRIES` times (default 3; 0
+    refuses at once). The new main must descend from the old one. An admitted
+    resolution is published on a new base only if its frozen witnesses,
+    re-run on the rebased commit, ADMIT it again; a COMPOSED candidate is
+    witness-checked by governCrewResult after publishing and taken back off
+    main (CAS) if refused. A REVIEW candidate a person cleared is not rebased
+    (the person cleared other content). A conflicting rebase, a failed
+    re-verification or exhausted retries refuse: `MainMovedError` for a
+    composition, REVIEW ("main moved …") for a resolution. Records of a
+    rebased candidate carry `rebased_onto` (admission-proof-v1, v2 payload).
+    A refused COMPOSED candidate is taken back off main only if main is still
+    at it. All other steps work on a detached HEAD.
 11. Sub-agents share the repository's git dir. The repository's control files
-    (config — adding an `include` changes it; an include target that already
-    pointed outside the git dir is not watched — `config.worktree`, hooks,
-    `info/`, object alternates, and the crew's own worktrees' admin files) are
+    (config, `config.worktree`, every file reached through `include.path` or
+    `includeIf.<cond>.path` from those configs — followed recursively,
+    wherever it lives, whether or not the condition currently holds, and
+    recorded as absent when it does not exist yet — hooks, `info/`, object
+    alternates, and every file in the crew's own worktrees' admin dirs except
+    git's volatile state: index, logs, refs, merge/rebase/bisect state,
+    locks; HEAD is watched for being attached, not for its commit) are
     snapshotted after the worktrees are created; when a sub-agent changed any,
     the files are restored and the crew is refused before any control-plane
     git runs in its worktree. Control-plane git in a sub-agent worktree uses

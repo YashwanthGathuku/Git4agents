@@ -31,7 +31,7 @@ export { MainMovedError } from "./main-ref.mjs";
 import { loadContenderIds } from "./agentfleet-slots.mjs";
 import { minimalEnv } from "./child-env.mjs";
 import { DEFAULT_RESOLVER_TIMEOUT_MS, runContained } from "./sandbox.mjs";
-import { MainMovedError, publishMain, readMain, restoreCheckout } from "./main-ref.mjs";
+import { MainMovedError, publishMain, publishWithRebase, readMain, restoreCheckout } from "./main-ref.mjs";
 import { withRepoLock } from "./repo-lock.mjs";
 import { changedControlFiles, restoreControlFiles, snapshotControlFiles } from "./repo-guard.mjs";
 import { GIT_MAX_BUFFER, modeAt, parseRawZ, porcelainZPaths, safeGit, splitZ } from "./safe-git.mjs";
@@ -625,7 +625,7 @@ function classifyEdits(repo, baseline, commits) {
  * `witness_manifest_sha256`, `resolution` and `witness_check` are passed
  * through when the caller has them (specs/amendments/governed-resolution-v1.md).
  *
- * @param {{ status: "COMPOSED" | "CONFLICTED" | "RESOLVED", baseline: string, commits: SubCommit[], conflict: { files: Array<{ path: string, classification: string, sides: Array<{ agent_id: string, role: string, intent: string, sha: string, text?: string }>, hunks?: Array<{ index: number, base: string, sides: Array<{ agent_id: string, text: string }> }> | null }> } | null, sha: string | null, contender_id: string, witness_manifest_sha256?: string | null, resolution?: import("../../src/lib/types.ts").CompositionResolution | null, witness_check?: import("../../src/lib/types.ts").WitnessCheck | null }} input
+ * @param {{ status: "COMPOSED" | "CONFLICTED" | "RESOLVED", baseline: string, commits: SubCommit[], conflict: { files: Array<{ path: string, classification: string, sides: Array<{ agent_id: string, role: string, intent: string, sha: string, text?: string }>, hunks?: Array<{ index: number, base: string, sides: Array<{ agent_id: string, text: string }> }> | null }> } | null, sha: string | null, contender_id: string, witness_manifest_sha256?: string | null, resolution?: import("../../src/lib/types.ts").CompositionResolution | null, witness_check?: import("../../src/lib/types.ts").WitnessCheck | null, rebased_onto?: string | null }} input
  */
 export function authorityComposition(input) {
 	const files = (input.conflict?.files ?? []).map((file) => ({
@@ -652,6 +652,7 @@ export function authorityComposition(input) {
 		...(input.witness_manifest_sha256 ? { witness_manifest_sha256: input.witness_manifest_sha256 } : {}),
 		...(input.status === "RESOLVED" && input.resolution ? { resolution: input.resolution } : {}),
 		...(input.status === "COMPOSED" && input.witness_check ? { witness_check: input.witness_check } : {}),
+		...((input.status === "COMPOSED" || input.status === "RESOLVED") && input.rebased_onto ? { rebased_onto: input.rebased_onto } : {}),
 	};
 	return {
 		...extras,
@@ -882,15 +883,26 @@ export function combineSubagentBranches(repo, baseline, commits, expectedMain = 
 		record,
 		`MADGRIX compose\n\n${commits.map((commit) => `${commit.id}: ${commit.intent}`).join("\n")}`,
 	);
+	// Lost the compare-and-swap: rebase onto the new main (bounded). A COMPOSED
+	// candidate has no witness gate here; governCrewResult runs it on the
+	// published commit and takes the commit back off main if it is refused.
+	let published;
 	try {
-		publishMain(repo, sha, expectedMain);
+		published = publishWithRebase(repo, sha, expectedMain, { reverify: null });
 	} catch (error) {
 		restoreCheckout(repo, baseline);
 		throw error;
 	}
+	if (!published.ok) {
+		restoreCheckout(repo, baseline);
+		const error = new MainMovedError(expectedMain, readMain(repo));
+		error.message = published.reason;
+		throw error;
+	}
 	return {
 		status: /** @type {const} */ ("COMPOSED"),
-		sha,
+		sha: published.sha,
+		...(published.rebases.length > 0 ? { main_before: published.base, published_base: published.base, rebases: published.rebases } : {}),
 		overlap: /** @type {string[]} */ ([]),
 		recordPath: RECORD_PATH,
 		resolution: /** @type {const} */ ("COMPOSED"),
