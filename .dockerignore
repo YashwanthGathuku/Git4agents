@@ -1,0 +1,12 @@
+node_modules
+.madgrix-demo
+.slice-output
+.cloudflare
+keys/*.pem
+keys/*private*
+paper/**/*.aux
+paper/**/*.log
+paper/**/*.bbl
+paper/**/*.blg
+paper/**/*.out
+git4agents-demo.mp4
