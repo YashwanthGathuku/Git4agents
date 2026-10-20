@@ -346,3 +346,38 @@ describe("offline verify of a resolved promotion", () => {
 		assert.equal(c.lines.find((l) => l.label === "resolution")?.status, "FAIL");
 	});
 });
+
+describe("RESOLVED hardening (stress report bug 8 / repro 13)", () => {
+	it("a retried identical RESOLVED is an idempotent no-op; a different one is still refused", async () => {
+		const ctx = makeCtx();
+		const state = await recordComposition(observed(SIDE_A), conflicted(), ctx);
+		const once = await recordComposition(state, resolved(state), ctx);
+		const twice = await recordComposition(once, resolved(state), ctx);
+		assert.equal(twice, once, "the same RESOLVED returns the recorded state unchanged");
+		assert.equal(twice.ledger.length, once.ledger.length);
+		await assert.rejects(
+			recordComposition(once, conflicted({ status: "RESOLVED", candidate_sha: "other-sha", resolution: resolution(state) }), ctx),
+			/candidate SHA is already bound/,
+		);
+	});
+
+	it("refuses a RESOLVED whose candidate is the baseline commit", async () => {
+		const ctx = makeCtx();
+		const state = await recordComposition(observed(SIDE_A), conflicted(), ctx);
+		await assert.rejects(
+			recordComposition(state, conflicted({ status: "RESOLVED", candidate_sha: BASELINE, resolution: resolution(state) }), ctx),
+			/must be new, not the baseline/,
+		);
+	});
+
+	it("refuses a RESOLVED that names other agents or intents than the conflict", async () => {
+		const ctx = makeCtx();
+		const state = await recordComposition(observed(SIDE_A), conflicted(), ctx);
+		const agents = conflicted().agents.map((agent) => ({ ...agent }));
+		agents[1].intent = "a different intent";
+		await assert.rejects(
+			recordComposition(state, conflicted({ status: "RESOLVED", candidate_sha: RESOLVED, agents, resolution: resolution(state) }), ctx),
+			/names other agents than the conflict/,
+		);
+	});
+});
