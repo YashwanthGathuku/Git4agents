@@ -22,9 +22,9 @@ Notification 11 December 2026; camera-ready 20 January 2027.
 
 ## Before you submit (your actions)
 
-1. **Make the container public.** GitHub → your profile → Packages → `git4agents` →
-   Package settings → Change visibility → Public. Reviewers pull without logging in.
-   The workflow's last step reports whether an anonymous pull works.
+1. **Container: done.** `ghcr.io/yashwanthgathuku/git4agents:icse27` was published on
+   2026-10-19 after 482/482 tests, a VERIFIED demo and 204/204 matching benchmark
+   outcomes inside the image; the workflow confirmed an anonymous pull works (public).
 2. **Code link.** The paper links to `.../tree/icse27-tool-paper`, and every push to that
    branch republishes `:icse27` after the image passes its checks. Avoid pushing to it
    during review unless you mean reviewers to see the change. A tag (e.g. `icse27-demo`)
