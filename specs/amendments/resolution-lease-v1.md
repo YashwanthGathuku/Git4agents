@@ -42,7 +42,8 @@ nothing else.
 3. Resolver inputs are written to a fresh directory outside the repository.
    The resolver receives `MADGRIX_CONFLICT_PATH` (absolute path to the
    conflict JSON), `MADGRIX_SIDES_DIR` (absolute path to the side texts),
-   `MADGRIX_BASELINE_SHA` and `MADGRIX_LEASED_PATHS` (newline-separated). It
+   `MADGRIX_BASELINE_SHA`, `MADGRIX_LEASED_PATHS_FILE` and, when small,
+   `MADGRIX_LEASED_PATHS` (newline-separated); see (2a). It
    still receives no service token. The directory is deleted when the resolver
    exits.
 4. After the resolver exits, the staged tree is compared with the pre-composed
@@ -55,6 +56,52 @@ nothing else.
    `lease: { format: "madgrix-resolution-lease/v1", paths, precomposed_tree }`,
    so anyone can check that the resolved tree differs from the pre-composed
    tree only on leased paths and the authority's own records.
+
+## (2a) Containment (resolution hardening, stress report 2026-10-19)
+
+1. **The resolver does not run in the authority repository.** Its working
+   directory is a fresh directory holding only the leased files at their
+   pre-composed text and mode. It is not a git repository; there is no
+   `.git`, so it cannot plant hooks or config. A resolver that relied on
+   `git` inside its working directory must read `MADGRIX_LEASED_PATHS_FILE`
+   instead.
+2. Every file left in that directory must be a leased path and a regular file
+   (checked with `lstat`; a symlink, FIFO or device is refused). A leased file
+   must keep its pre-composed exec bit. Only then are the files copied into
+   the authority repository; `diff-index --raw` against the pre-composed tree
+   is checked again, modes included.
+3. The authority repository's config, hooks, info files, refs and working
+   tree status are fingerprinted before the resolver runs; any change refuses
+   the resolution.
+4. The leased paths are in `MADGRIX_LEASED_PATHS_FILE` (a JSON array).
+   `MADGRIX_LEASED_PATHS` (newline-separated) is still set when it is at most
+   32 KiB, so a wide lease no longer hits the kernel's per-variable limit.
+5. The resolver runs in its own process group under a reaper
+   (`scripts/lib/sandbox-reaper.mjs`). When it exits or reaches its timeout
+   (`opts.timeoutMs`, else `MADGRIX_RESOLVER_TIMEOUT_MS`, else 10 minutes) the
+   group is killed, and so is every process still carrying the run's
+   `MADGRIX_SANDBOX_RUN` nonce (one that called `setsid`). stdout is
+   discarded and stderr goes to a file, so there is no output cap.
+6. When bubblewrap works on the host (`MADGRIX_RESOLVER_SANDBOX=auto`, the
+   default; `bwrap` requires it, `none` skips it) the resolver also gets a new
+   PID namespace and `/proc` (the runner's `/proc/<pid>/environ` is not
+   visible; every process in the namespace dies with it), a read-only root
+   file system, a private writable `TMPDIR`, and an empty `~/.madgrix`.
+   Without bubblewrap a same-uid resolver can still read other processes'
+   `/proc/<pid>/environ` and write outside its directory; keep tokens out of
+   the runner's environment (`MADGRIX_AGENT_SERVICE_TOKEN_FILE`).
+7. Conflict markers: a line that is exactly a git marker line
+   (`<<<<<<< `, `||||||| `, `=======`, `>>>>>>> `) is refused unless that same
+   line is already in the base or a side, so a file that legitimately contains
+   one can be resolved and a lone `=======` cannot slip through.
+8. Control-plane git runs with `core.hooksPath=/dev/null`,
+   `core.fsmonitor=false`, no system or global config, and NUL-separated path
+   output (`-z`, no rename detection). Witness trees are written with a
+   private index and `checkout-index`, not `worktree add`, so no hook runs.
+9. Control-plane steps that move `main` or write the working tree of one
+   repository hold `.git/madgrix-control.lock` (stale locks of dead pids are
+   taken over). Sub-agent worktrees are detached; their commits are kept under
+   `refs/madgrix/runs/<run>/<agent>`, not `madgrix/<agent>` branches.
 
 ## (3) What does not change
 

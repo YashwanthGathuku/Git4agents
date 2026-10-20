@@ -102,6 +102,8 @@ describe("resolution lease", () => {
 
 	it("refuses a resolver that deletes a clean file and returns the checkout to the baseline", async () => {
 		const { repo, conflicted } = await conflictedDemo();
+		// The resolver's directory holds only the leased files, so a clean
+		// file is not there to delete: the rm fails and the resolver is refused.
 		assert.throws(
 			() =>
 				resolveComposition(
@@ -109,7 +111,7 @@ describe("resolution lease", () => {
 					conflicted,
 					"rm src/api/handler.js && printf '%s\\n' 'export const label = \"api+ui\";' > src/contract.js",
 				),
-			/resolver changed src\/api\/handler\.js, outside its lease \(src\/contract\.js\)/,
+			/resolver exited 1: rm: cannot remove 'src\/api\/handler\.js'/,
 		);
 		assert.equal(git(repo, ["rev-parse", "HEAD"]), conflicted.baseline);
 		assert.equal(git(repo, ["status", "--porcelain"]), "");
@@ -123,7 +125,7 @@ describe("resolution lease", () => {
 					repo,
 					conflicted,
 					"printf '%s\\n' 'export const label = \"api+ui\";' > src/contract.js && " +
-						"printf '%s\\n' 'export function check() { return true; }' > test/integration/check.js && " +
+						"mkdir -p test/integration && printf '%s\\n' 'export function check() { return true; }' > test/integration/check.js && " +
 						"printf 'edited by resolver\\n' > README.md",
 				),
 			(error: Error) =>
@@ -169,11 +171,20 @@ describe("resolution lease", () => {
 		const { repo, conflicted } = await conflictedDemo();
 		const probe = path.join(mkdtempSync(path.join(tmpdir(), "madgrix-lease-probe-")), "inputs.txt");
 		dirs.push(path.dirname(probe));
-		resolveComposition(
-			repo,
-			conflicted,
-			`printf '%s\\n' 'export const label = "api+ui";' > src/contract.js && dirname "$MADGRIX_CONFLICT_PATH" > ${JSON.stringify(probe)}`,
-		);
+		// The probe writes outside the work directory, which bubblewrap makes
+		// read-only; this test checks cleanup, so it runs without bubblewrap.
+		const saved = process.env.MADGRIX_RESOLVER_SANDBOX;
+		process.env.MADGRIX_RESOLVER_SANDBOX = "none";
+		try {
+			resolveComposition(
+				repo,
+				conflicted,
+				`printf '%s\\n' 'export const label = "api+ui";' > src/contract.js && dirname "$MADGRIX_CONFLICT_PATH" > ${JSON.stringify(probe)}`,
+			);
+		} finally {
+			if (saved === undefined) delete process.env.MADGRIX_RESOLVER_SANDBOX;
+			else process.env.MADGRIX_RESOLVER_SANDBOX = saved;
+		}
 		const inputDir = spawnSync("cat", [probe], { encoding: "utf8" }).stdout.trim();
 		assert.ok(inputDir.length > 0);
 		assert.equal(existsSync(inputDir), false);
