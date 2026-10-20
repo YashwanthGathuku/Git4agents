@@ -12,9 +12,13 @@
 FROM rust:1-slim AS mergiraf
 RUN cargo install mergiraf --version 0.20.0 --locked
 
-FROM node:22-slim
+# Trixie, like the promotion container (container/Dockerfile): the rebase
+# path sets GIT_ATTR_SOURCE so a candidate's own .gitattributes cannot pick
+# merge drivers, and Bookworm's Git 2.39 ignores that variable.
+# python3 runs the TheUstad verifier (standard library only).
+FROM node:22-trixie-slim
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends git ca-certificates \
+	&& apt-get install -y --no-install-recommends git ca-certificates python3 \
 	&& rm -rf /var/lib/apt/lists/*
 COPY --from=mergiraf /usr/local/cargo/bin/mergiraf /usr/local/bin/mergiraf
 RUN git config --global user.name "Git4agents reviewer" \
