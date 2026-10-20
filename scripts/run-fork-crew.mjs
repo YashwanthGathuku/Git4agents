@@ -21,6 +21,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { createPrivateKey, sign as cryptoSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -47,6 +48,25 @@ const taskId = process.env.MADGRIX_TASK_ID;
 // environment block, which a same-uid child could read via /proc/<pid>/environ.
 // The env variable is still accepted; resolvers never receive either.
 const agentServiceToken = readServiceToken();
+/**
+ * The witness runner's Ed25519 signer, from MADGRIX_WITNESS_RUNNER_KEY_FILE
+ * (PKCS8 PEM). The authority pins the matching public key
+ * (MADGRIX_WITNESS_RUNNER_PUBLIC_KEY) and then requires an admission proof.
+ * @returns {{ sign(payload: Uint8Array): Promise<{ signature: string }> } | undefined}
+ */
+function witnessRunnerSigner() {
+	const file = process.env.MADGRIX_WITNESS_RUNNER_KEY_FILE;
+	if (!file) return undefined;
+	let key;
+	try {
+		key = createPrivateKey(readFileSync(file));
+	} catch {
+		console.error("MADGRIX_WITNESS_RUNNER_KEY_FILE is not a readable PKCS8 key");
+		process.exit(2);
+	}
+	return { sign: async (payload) => ({ signature: cryptoSign(null, payload, key).toString("base64") }) };
+}
+
 function readServiceToken() {
 	const file = process.env.MADGRIX_AGENT_SERVICE_TOKEN_FILE;
 	delete process.env.MADGRIX_AGENT_SERVICE_TOKEN_FILE;
@@ -366,6 +386,7 @@ try {
 		mergiraf: "auto",
 		requiredSides: riskySides,
 		reviewClearedBy: process.env.MADGRIX_REVIEW_CLEARED_BY?.trim() || null,
+		witnessSigner: witnessRunnerSigner(),
 	});
 	/** @type {string | null} */
 	let candidateSha = governed.candidateSha;

@@ -26,9 +26,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+export { withRepoLock } from "./repo-lock.mjs";
+export { MainMovedError } from "./main-ref.mjs";
 import { loadContenderIds } from "./agentfleet-slots.mjs";
 import { minimalEnv } from "./child-env.mjs";
 import { DEFAULT_RESOLVER_TIMEOUT_MS, runContained } from "./sandbox.mjs";
+import { MainMovedError, publishMain, readMain, restoreCheckout } from "./main-ref.mjs";
+import { withRepoLock } from "./repo-lock.mjs";
+import { changedControlFiles, restoreControlFiles, snapshotControlFiles } from "./repo-guard.mjs";
 import { GIT_MAX_BUFFER, modeAt, parseRawZ, porcelainZPaths, safeGit, splitZ } from "./safe-git.mjs";
 
 /**
@@ -747,7 +752,8 @@ function commitIndex(repo, baseline, commits, record, message) {
 	const tree = git(repo, ["write-tree"]).stdout.trim();
 	const parentArgs = ["-p", baseline, ...commits.flatMap((commit) => ["-p", commit.sha])];
 	const sha = git(repo, ["commit-tree", tree, ...parentArgs, "-m", message]).stdout.trim();
-	git(repo, ["checkout", "-B", "main", sha]);
+	// Detached at the new commit; main moves only through publishMain (CAS).
+	git(repo, ["update-ref", "--no-deref", "HEAD", sha]);
 	return sha;
 }
 
@@ -843,8 +849,9 @@ function writeLeafFile(repo, file, content, mode) {
  * @param {string} repo
  * @param {string} baseline
  * @param {SubCommit[]} commits
+ * @param {string | null} [expectedMain] main before the crew (CAS expected value); default the baseline
  */
-export function combineSubagentBranches(repo, baseline, commits) {
+export function combineSubagentBranches(repo, baseline, commits, expectedMain = baseline) {
 	const { owners, conflicts } = classifyEdits(repo, baseline, commits);
 	if (conflicts.length > 0) {
 		const conflict = conflictRecord(repo, baseline, commits, conflicts);
@@ -857,7 +864,8 @@ export function combineSubagentBranches(repo, baseline, commits) {
 			conflict,
 		};
 	}
-	git(repo, ["checkout", "-B", "main", baseline]);
+	restoreCheckout(repo, baseline);
+	git(repo, ["checkout", "--quiet", "--detach", "-f", baseline]);
 	git(repo, ["read-tree", baseline]);
 	applyCleanEdits(repo, baseline, owners);
 	const record = {
@@ -874,6 +882,12 @@ export function combineSubagentBranches(repo, baseline, commits) {
 		record,
 		`MADGRIX compose\n\n${commits.map((commit) => `${commit.id}: ${commit.intent}`).join("\n")}`,
 	);
+	try {
+		publishMain(repo, sha, expectedMain);
+	} catch (error) {
+		restoreCheckout(repo, baseline);
+		throw error;
+	}
 	return {
 		status: /** @type {const} */ ("COMPOSED"),
 		sha,
@@ -957,100 +971,111 @@ export function verifyFrozenBaseline(repo, baseline) {
  * @param {(repo: string, baseline: string) => void | { final: string, exit: number }} [verify]
  */
 export async function runCrewOnFork(repo, crew, runSub, verify = verifyFrozenBaseline) {
-	const baseline = git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-	/** @type {Array<{ sub: ReturnType<typeof loadForkCrew>["subs"][number], wt: string }>} */
-	const prepared = crew.subs.map((sub) => {
-		const wt = mkdtempSync(path.join(os.tmpdir(), `madgrix-${sub.id}-`));
-		// Detached: a re-run with the same agent ids, or a concurrent crew, does
-		// not trip over a leftover madgrix/<id> branch. The commit is kept
-		// reachable under refs/madgrix/runs/<run>/<id> instead (not a branch).
-		withRepoLock(repo, () => git(repo, ["worktree", "add", "--quiet", "--detach", wt, baseline]));
-		return { sub, wt };
+	const { baseline, mainBefore } = withRepoLock(repo, () => {
+		const head = git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+		const main = readMain(repo);
+		// The crew composes onto main. A checkout whose HEAD is not main (for
+		// example left behind while another crew published) would compose onto
+		// a stale commit; refuse instead of silently dropping that work.
+		if (main !== null && main !== head) {
+			throw new Error(`HEAD (${head}) is not main (${main}); check out main before running a crew`);
+		}
+		return { baseline: head, mainBefore: main };
 	});
+	/** @type {Array<{ sub: ReturnType<typeof loadForkCrew>["subs"][number], wt: string, adminDir: string }>} */
+	const prepared = [];
+	/** @type {ReturnType<typeof snapshotControlFiles> | null} */
+	let guard = null;
 	/** @type {SubCommit[]} */
 	let commits = [];
+	const run = `${Date.now().toString(36)}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 	try {
+		withRepoLock(repo, () => {
+			for (const sub of crew.subs) {
+				const wt = mkdtempSync(path.join(os.tmpdir(), `madgrix-${sub.id}-`));
+				// Detached: a re-run with the same agent ids, or a concurrent crew,
+				// does not trip over a leftover madgrix/<id> branch.
+				git(repo, ["worktree", "add", "--quiet", "--detach", wt, baseline]);
+				// The worktree's admin dir, read before the agent runs: the agent
+				// can rewrite wt/.git to point anywhere, so control-plane git in the
+				// worktree uses this GIT_DIR explicitly.
+				const adminDir = path.resolve(wt, git(wt, ["rev-parse", "--git-dir"]).stdout.trim());
+				prepared.push({ sub, wt, adminDir });
+			}
+			guard = snapshotControlFiles(repo, { worktrees: prepared.map((p) => path.basename(p.adminDir)) });
+		});
 		await Promise.all(prepared.map(({ sub, wt }) => (runSub ? runSub(sub, wt) : runConfiguredCommand(sub, wt))));
-		commits = prepared.map(({ sub, wt }) => commitWorktree(sub, wt));
-		const run = `${Date.now().toString(36)}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+		// A sub-agent shares the repository's git dir. Config (filters, includes,
+		// fsmonitor, worktreeConfig), hooks, attributes or alternates it wrote
+		// would run inside the next control-plane git call; refuse the crew and
+		// put the files back first.
+		const g = /** @type {ReturnType<typeof snapshotControlFiles>} */ (/** @type {unknown} */ (guard));
+		const tampered = withRepoLock(repo, () => {
+			const changed = changedControlFiles(g);
+			if (changed.length > 0) restoreControlFiles(g);
+			return changed;
+		});
+		if (tampered.length > 0) {
+			throw new Error(`a sub-agent changed repository control files (${tampered.join(", ")}); the crew is refused and the files were restored`);
+		}
+		commits = prepared.map(({ sub, wt, adminDir }) => commitWorktree(sub, wt, adminDir));
 		withRepoLock(repo, () => {
 			for (const commit of commits) git(repo, ["update-ref", `refs/madgrix/runs/${run}/${commit.id}`, commit.sha]);
 		});
 	} finally {
-		for (const { wt } of prepared) {
-			git(repo, ["worktree", "remove", "--force", wt], { allowFailure: true });
-			rmSync(wt, { recursive: true, force: true });
-		}
+		withRepoLock(repo, () => {
+			for (const { wt } of prepared) {
+				git(repo, ["worktree", "remove", "--force", wt], { allowFailure: true });
+				rmSync(wt, { recursive: true, force: true });
+			}
+			git(repo, ["worktree", "prune"], { allowFailure: true });
+		});
 	}
 	// The gate's FINAL line is carried in the result so the live log can print
 	// TheUstad's verdict (a throwing gate never reaches this point).
 	const theustad = verify(repo, baseline) ?? null;
-	const combined = withRepoLock(repo, () => combineSubagentBranches(repo, baseline, commits));
-	return { baseline, commits, theustad, ...combined };
+	const combined = withRepoLock(repo, () => combineSubagentBranches(repo, baseline, commits, mainBefore));
+	return { baseline, main_before: mainBefore, run_ref: `${RUN_REF_ROOT}/${run}`, commits, theustad, ...combined };
 }
 
-/** @type {Map<string, number>} */
-const heldLocks = new Map();
+export const RUN_REF_ROOT = "refs/madgrix/runs";
 
 /**
- * Serialize control-plane work that moves `main` or writes the working tree
- * of `repo`, across processes. The lock is a directory in the repository's
- * git dir holding the owner's pid; a lock whose owner is gone is stale and is
- * taken over. Re-entrant within one process.
- *
- * @template T
+ * Delete a run's refs/madgrix/runs/<run>/* refs (its sub-agent commits).
  * @param {string} repo
- * @param {() => T} fn
- * @returns {T}
+ * @param {string} runRef
  */
-export function withRepoLock(repo, fn) {
-	const gitDir = path.resolve(repo, git(repo, ["rev-parse", "--git-common-dir"]).stdout.trim());
-	const lock = path.join(gitDir, "madgrix-control.lock");
-	const held = heldLocks.get(lock) ?? 0;
-	if (held > 0) {
-		heldLocks.set(lock, held + 1);
-		try {
-			return fn();
-		} finally {
-			heldLocks.set(lock, (heldLocks.get(lock) ?? 1) - 1);
+export function deleteRunRefs(repo, runRef) {
+	if (!runRef.startsWith(`${RUN_REF_ROOT}/`)) throw new Error(`not a run ref: ${runRef}`);
+	return withRepoLock(repo, () => {
+		const refs = splitZ(git(repo, ["for-each-ref", "--format=%(refname)%00", `${runRef}/`]).stdout).map((r) => r.trim()).filter(Boolean);
+		for (const ref of refs) git(repo, ["update-ref", "-d", ref]);
+		return refs;
+	});
+}
+
+/**
+ * Prune run refs older than `olderThanMs` (by the timestamp in the run id).
+ * Runs that did not publish keep their refs for forensics until pruned.
+ * @param {string} repo
+ * @param {{ olderThanMs?: number, now?: number }} [opts]
+ */
+export function pruneRunRefs(repo, opts = {}) {
+	const now = opts.now ?? Date.now();
+	const olderThan = opts.olderThanMs ?? 0;
+	return withRepoLock(repo, () => {
+		const refs = splitZ(git(repo, ["for-each-ref", "--format=%(refname)%00", `${RUN_REF_ROOT}/`]).stdout).map((r) => r.trim()).filter(Boolean);
+		/** @type {string[]} */
+		const pruned = [];
+		for (const ref of refs) {
+			const run = ref.slice(RUN_REF_ROOT.length + 1).split("/")[0];
+			const born = parseInt(run.split("-")[0], 36);
+			if (Number.isFinite(born) && now - born < olderThan) continue;
+			git(repo, ["update-ref", "-d", ref]);
+			pruned.push(ref);
 		}
-	}
-	const deadline = Date.now() + Number(process.env.MADGRIX_LOCK_TIMEOUT_MS ?? 30 * 60_000);
-	const sleeper = new Int32Array(new SharedArrayBuffer(4));
-	for (;;) {
-		try {
-			mkdirSync(lock);
-			writeFileSync(path.join(lock, "pid"), String(process.pid));
-			break;
-		} catch (error) {
-			if (/** @type {NodeJS.ErrnoException} */ (error).code !== "EEXIST") throw error;
-			let owner = NaN;
-			try {
-				owner = Number(readFileSync(path.join(lock, "pid"), "utf8"));
-			} catch {}
-			let alive = true;
-			if (Number.isInteger(owner) && owner > 0) {
-				try {
-					process.kill(owner, 0);
-				} catch (e) {
-					alive = /** @type {NodeJS.ErrnoException} */ (e).code === "EPERM";
-				}
-			}
-			if (!alive) {
-				rmSync(lock, { recursive: true, force: true });
-				continue;
-			}
-			if (Date.now() > deadline) throw new Error(`another control-plane run holds ${lock}`);
-			Atomics.wait(sleeper, 0, 0, 25);
-		}
-	}
-	heldLocks.set(lock, 1);
-	try {
-		return fn();
-	} finally {
-		heldLocks.delete(lock);
-		rmSync(lock, { recursive: true, force: true });
-	}
+		return pruned;
+	});
 }
 
 export const RESOLUTION_LEASE_VERSION = "madgrix-resolution-lease/v1";
@@ -1098,27 +1123,17 @@ function walkEntries(dir, rel = "") {
  * @param {string} repo
  */
 function repoFingerprint(repo) {
-	const gitDir = path.resolve(repo, git(repo, ["rev-parse", "--git-common-dir"]).stdout.trim());
 	const hash = createHash("sha256");
-	for (const sub of ["config", "hooks", "info"]) {
-		const full = path.join(gitDir, sub);
-		let stat;
-		try {
-			stat = lstatSync(full);
-		} catch {
-			hash.update(`${sub}:absent\0`);
-			continue;
-		}
-		if (!stat.isDirectory()) {
-			hash.update(`${sub}:${stat.mode}:`).update(stat.isFile() ? readFileSync(full) : "special").update("\0");
-			continue;
-		}
-		for (const entry of walkEntries(full)) {
-			hash.update(`${sub}/${entry.rel}:${entry.stat.mode}:`);
-			hash.update(entry.stat.isFile() ? readFileSync(path.join(full, entry.rel)) : "special").update("\0");
-		}
-	}
-	hash.update(git(repo, ["for-each-ref", "--format=%(refname) %(objectname)"]).stdout);
+	// Linked-worktree admin dirs belong to running crews; the resolver cannot
+	// reach them (its cwd is not a worktree) and they change concurrently.
+	const snap = snapshotControlFiles(repo, { worktrees: [] });
+	for (const [rel, value] of [...snap.files].sort(([a], [b]) => (a < b ? -1 : 1))) hash.update(`${rel}\0${value}\0`);
+	// main and run refs move under other crews' CAS publishes; every other ref
+	// must stay put.
+	const refs = git(repo, ["for-each-ref", "--format=%(refname) %(objectname)"]).stdout
+		.split("\n")
+		.filter((line) => line && !line.startsWith("refs/heads/main ") && !line.startsWith(`${RUN_REF_ROOT}/`));
+	hash.update(refs.join("\n"));
 	hash.update(git(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "-uall"]).stdout);
 	return hash.digest("hex");
 }
@@ -1191,9 +1206,10 @@ function resolveLocked(repo, crewResult, command, extraEnv, opts) {
 	const leasedPaths = recorded.files.map((file) => file.path);
 	const leased = new Set(leasedPaths);
 
-	git(repo, ["checkout", "-B", "main", baseline]);
-	git(repo, ["reset", "--hard", baseline]);
-	git(repo, ["clean", "-fd"]);
+	// Detached at the baseline: resolving never moves main.
+	git(repo, ["checkout", "--quiet", "--detach", "-f", baseline]);
+	git(repo, ["reset", "--quiet", "--hard", baseline]);
+	git(repo, ["clean", "-fdq"]);
 	// The lease is derived from the crew's commits, not trusted from the record:
 	// a record that names a path the commits do not conflict on (or omits one)
 	// would widen or shrink what the resolver may write. The hunks are derived
@@ -1348,8 +1364,7 @@ function resolveLocked(repo, crewResult, command, extraEnv, opts) {
 			if (!changed.includes(file.path)) throw new Error(`resolver left ${file.path} unresolved`);
 		}
 	} catch (error) {
-		git(repo, ["reset", "--hard", baseline], { allowFailure: true });
-		git(repo, ["clean", "-fd"], { allowFailure: true });
+		restoreCheckout(repo, baseline);
 		throw error;
 	} finally {
 		rmSync(inputs, { recursive: true, force: true });
@@ -1403,19 +1418,22 @@ const LEASE_ENV = new Set([
 /**
  * @param {ReturnType<typeof loadForkCrew>["subs"][number]} sub
  * @param {string} wt
+ * @param {string} adminDir
  * @returns {SubCommit}
  */
-function commitWorktree(sub, wt) {
-	const files = porcelainPaths(git(wt, ["status", "--porcelain=v1", "-z", "--no-renames", "-uall"]).stdout);
+function commitWorktree(sub, wt, adminDir) {
+	/** @param {string[]} args */
+	const wgit = (args) => safeGit(wt, args, { env: { ...gitEnv(), GIT_DIR: adminDir, GIT_WORK_TREE: wt } });
+	const files = porcelainPaths(wgit(["status", "--porcelain=v1", "-z", "--no-renames", "-uall"]).stdout);
 	if (files.length === 0) throw new Error(`${sub.id} produced no change on the parent fork`);
 	for (const file of files) {
 		if (!pathInScope(file, sub.paths)) {
 			throw new Error(`${sub.id} changed ${file}, which is outside its role scope`);
 		}
 	}
-	git(wt, ["add", "-A"]);
-	git(wt, ["commit", "-m", `MADGRIX sub-agent ${sub.id}: ${sub.intent}`]);
-	const sha = git(wt, ["rev-parse", "HEAD"]).stdout.trim();
+	wgit(["add", "-A"]);
+	wgit(["commit", "--no-verify", "-m", `MADGRIX sub-agent ${sub.id}: ${sub.intent}`]);
+	const sha = wgit(["rev-parse", "HEAD"]).stdout.trim();
 	const claimed = /** @type {{ claim_work_id?: string | null }} */ (sub).claim_work_id ?? null;
 	return {
 		id: sub.id,

@@ -82,14 +82,15 @@ nothing else.
    group is killed, and so is every process still carrying the run's
    `MADGRIX_SANDBOX_RUN` nonce (one that called `setsid`). stdout is
    discarded and stderr goes to a file, so there is no output cap.
-6. When bubblewrap works on the host (`MADGRIX_RESOLVER_SANDBOX=auto`, the
-   default; `bwrap` requires it, `none` skips it) the resolver also gets a new
-   PID namespace and `/proc` (the runner's `/proc/<pid>/environ` is not
-   visible; every process in the namespace dies with it), a read-only root
-   file system, a private writable `TMPDIR`, and an empty `~/.madgrix`.
-   Without bubblewrap a same-uid resolver can still read other processes'
-   `/proc/<pid>/environ` and write outside its directory; keep tokens out of
-   the runner's environment (`MADGRIX_AGENT_SERVICE_TOKEN_FILE`).
+6. Bubblewrap is mandatory (`MADGRIX_RESOLVER_SANDBOX` defaults to `bwrap`).
+   The resolver gets a new PID namespace and `/proc` (the runner's
+   `/proc/<pid>/environ` is not visible; every process in the namespace dies
+   with it), a read-only root file system, a private writable `TMPDIR`, and an
+   empty `~/.madgrix`. When bubblewrap cannot create a sandbox the resolver is
+   not run and the attempt is refused (REVIEW). `MADGRIX_RESOLVER_SANDBOX=none`
+   is honoured only together with `MADGRIX_I_ACCEPT_UNSANDBOXED_RESOLVER=1`
+   and prints a warning; in that mode a same-uid resolver can read other
+   processes' `/proc/<pid>/environ` and write outside its directory.
 7. Conflict markers: a line that is exactly a git marker line
    (`<<<<<<< `, `||||||| `, `=======`, `>>>>>>> `) is refused unless that same
    line is already in the base or a side, so a file that legitimately contains
@@ -101,7 +102,26 @@ nothing else.
 9. Control-plane steps that move `main` or write the working tree of one
    repository hold `.git/madgrix-control.lock` (stale locks of dead pids are
    taken over). Sub-agent worktrees are detached; their commits are kept under
-   `refs/madgrix/runs/<run>/<agent>`, not `madgrix/<agent>` branches.
+   `refs/madgrix/runs/<run>/<agent>`, not `madgrix/<agent>` branches. Those
+   refs are deleted once the run's candidate is on main (reachable through its
+   parents); a run that did not publish keeps them for forensics
+   (`npm run prune:runs -- <repo> [--older-than-days N]`).
+10. `main` moves only by compare-and-swap (`git update-ref refs/heads/main
+    <new> <expected>`, scripts/lib/main-ref.mjs). The expected value is main
+    when the crew started. A crew refuses to start when HEAD is not main. A
+    composition whose publish finds main moved throws `MainMovedError`; an
+    admitted resolution whose publish finds main moved is REVIEW ("main
+    moved"); a refused COMPOSED candidate is taken back off main only if main
+    is still at it. All other steps work on a detached HEAD.
+11. Sub-agents share the repository's git dir. The repository's control files
+    (config — adding an `include` changes it; an include target that already
+    pointed outside the git dir is not watched — `config.worktree`, hooks,
+    `info/`, object alternates, and the crew's own worktrees' admin files) are
+    snapshotted after the worktrees are created; when a sub-agent changed any,
+    the files are restored and the crew is refused before any control-plane
+    git runs in its worktree. Control-plane git in a sub-agent worktree uses
+    the admin dir recorded before the agent ran (`GIT_DIR`), not the
+    worktree's `.git` file, which the agent can rewrite.
 
 ## (3) What does not change
 

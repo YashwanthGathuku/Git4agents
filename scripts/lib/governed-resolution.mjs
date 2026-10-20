@@ -20,10 +20,13 @@
 
 import { buildConflictCapsuleV2 } from "../../src/lib/conflict-capsule.ts";
 import { safeGit } from "./safe-git.mjs";
-import { authorityComposition } from "./fork-crew.mjs";
+import { WITNESS_ATTESTATION_FORMAT, attestationBytes, parseCommitObject } from "../../src/lib/admission-proof.ts";
+import { authorityComposition, deleteRunRefs } from "./fork-crew.mjs";
+import { MainMovedError, publishMain, readMain, restoreCheckout } from "./main-ref.mjs";
 import {
 	REPLAYER_ENV_NAMES,
 	findMergiraf,
+	publishCandidate,
 	resolutionRecord,
 	resolveWithCommand,
 	resolveWithLadder,
@@ -34,6 +37,7 @@ import { witnessReport } from "./witness.mjs";
 /**
  * @typedef {import("./witness.mjs").LoadedWitnesses} LoadedWitnesses
  * @typedef {ReturnType<typeof import("./witness.mjs").freezeWitnesses>} FrozenWitnesses
+ * @typedef {{ sign(payload: Uint8Array): Promise<{ signature: string }> }} WitnessSigner
  */
 
 /**
@@ -53,9 +57,38 @@ import { witnessReport } from "./witness.mjs";
  *   requiredSides?: string[],
  *   reviewClearedBy?: string | null,
  *   timeoutMs?: number,
+ *   witnessSigner?: WitnessSigner,
  * }} opts
  */
 export async function governCrewResult(repo, crewRun, opts) {
+	const result = await governInner(repo, crewRun, opts);
+	// Run refs keep the sub-agent commits reachable. Once the candidate is on
+	// main they are reachable through its parents and are deleted; a run that
+	// did not publish keeps them for forensics (prune with
+	// `npm run prune:runs -- <repo> [--older-than-days N]`).
+	const runRef = /** @type {{ run_ref?: string }} */ (crewRun).run_ref;
+	/** @type {{ run_refs: "deleted" | "kept" | "none", forensic_ref: string | null }} */
+	let refs = { run_refs: "none", forensic_ref: null };
+	if (runRef) {
+		const published = result.candidateSha !== null && readMain(repo) === result.candidateSha;
+		if (published) {
+			deleteRunRefs(repo, runRef);
+			refs = { run_refs: "deleted", forensic_ref: null };
+		} else refs = { run_refs: "kept", forensic_ref: runRef };
+	}
+	let proofs = null;
+	if (opts.witnessSigner && result.candidateSha) {
+		proofs = await attachAdmissionProofs(repo, result.compositions, { ...opts, witnessSigner: opts.witnessSigner }, result);
+	}
+	return { ...result, ...refs, ...(proofs ? { compositions: proofs } : {}) };
+}
+
+/**
+ * @param {string} repo
+ * @param {Parameters<typeof governCrewResult>[1]} crewRun
+ * @param {Parameters<typeof governCrewResult>[2]} opts
+ */
+async function governInner(repo, crewRun, opts) {
 	const manifestSha = opts.witnesses?.sha256 ?? null;
 	/**
 	 * @param {"COMPOSED" | "CONFLICTED" | "RESOLVED"} status
@@ -83,18 +116,19 @@ export async function governCrewResult(repo, crewRun, opts) {
 			timeoutMs: opts.timeoutMs,
 		});
 		if (witness.verdict === "REFUSE") {
-			resetMain(repo, crewRun.baseline);
+			const main_revert = revertComposed(repo, crewRun);
 			return {
 				status: /** @type {const} */ ("SEMANTIC_CONFLICT"),
 				candidateSha: null,
 				compositions: [],
 				witness,
 				detail: `the crew's edits merged cleanly as text, but ${witness.report.reasons.join("; ")}`,
+				main_revert,
 			};
 		}
 		if (witness.verdict === "REVIEW" && !opts.reviewClearedBy) {
-			resetMain(repo, crewRun.baseline);
-			return { status: /** @type {const} */ ("REVIEW"), candidateSha: null, compositions: [], witness, detail: witness.report.reasons.join("; ") };
+			const main_revert = revertComposed(repo, crewRun);
+			return { status: /** @type {const} */ ("REVIEW"), candidateSha: null, compositions: [], witness, detail: witness.report.reasons.join("; "), main_revert };
 		}
 		const witness_check = {
 			witness_manifest_sha256: manifestSha,
@@ -141,7 +175,16 @@ export async function governCrewResult(repo, crewRun, opts) {
 		if (!opts.reviewClearedBy || !clearable) {
 			return { status: /** @type {const} */ ("REVIEW"), candidateSha: null, compositions: [conflictedRecord], capsule, review: result };
 		}
-		resetMain(repo, clearable.candidate.sha);
+		const refused = publishCandidate(repo, crewRun, clearable.candidate.sha);
+		if (refused) {
+			return {
+				status: /** @type {const} */ ("REVIEW"),
+				candidateSha: null,
+				compositions: [conflictedRecord],
+				capsule,
+				review: { ...result, reason: `the cleared candidate was not published: ${refused}` },
+			};
+		}
 		const resolution = resolutionRecord(
 			{ ...clearable.candidate, order_agreement: clearable.agreement },
 			{ capsuleId: capsule.capsule_id, witnessManifestSha256: manifestSha, reviewClearedBy: opts.reviewClearedBy },
@@ -189,11 +232,74 @@ function clearableCandidate(repo, candidates) {
 }
 
 /**
+ * Take a refused COMPOSED candidate back off main with compare-and-swap: main
+ * returns to where it was before the crew only if it is still at the
+ * candidate. When another run moved main since, main is left alone and the
+ * result says so.
  * @param {string} repo
- * @param {string} sha
+ * @param {{ baseline: string, sha: string | null, main_before?: string | null }} crewRun
+ * @returns {"reverted" | string}
  */
-function resetMain(repo, sha) {
-	safeGit(repo, ["checkout", "-B", "main", sha], { allowFailure: true });
-	safeGit(repo, ["reset", "--hard", sha], { allowFailure: true });
-	safeGit(repo, ["clean", "-fd"], { allowFailure: true });
+function revertComposed(repo, crewRun) {
+	const before = crewRun.main_before === undefined ? crewRun.baseline : crewRun.main_before;
+	if (!crewRun.sha || before === null) {
+		restoreCheckout(repo, crewRun.baseline);
+		return "reverted";
+	}
+	try {
+		publishMain(repo, before, crewRun.sha);
+		return "reverted";
+	} catch (error) {
+		restoreCheckout(repo, crewRun.baseline);
+		if (error instanceof MainMovedError) return `not reverted: ${error.message}`;
+		throw error;
+	}
+}
+
+/**
+ * Add an admission proof (src/lib/admission-proof.ts) to each COMPOSED or
+ * RESOLVED record: the candidate's raw commit object, and, when the record
+ * carries a witness verdict, the witness runner's signature over it.
+ *
+ * @param {string} repo
+ * @param {any[]} compositions
+ * @param {{ taskHash: string, contenderId: string, witnessSigner: WitnessSigner }} opts
+ * @param {{ candidateSha: string | null }} result
+ */
+async function attachAdmissionProofs(repo, compositions, opts, result) {
+	/** @type {string | null} */
+	const capsule = compositions.find((c) => c.status === "CONFLICTED")?.capsule_id ?? null;
+	const out = [];
+	for (const record of compositions) {
+		if ((record.status !== "COMPOSED" && record.status !== "RESOLVED") || record.candidate_sha !== result.candidateSha) {
+			out.push(record);
+			continue;
+		}
+		const raw = safeGit(repo, ["cat-file", "commit", record.candidate_sha], { buffer: true }).raw;
+		if (!raw) throw new Error("admission proof: could not read the candidate commit");
+		const body = new Uint8Array(raw);
+		const witness = record.status === "RESOLVED" ? record.resolution?.witness ?? null : record.witness_check ?? null;
+		/** @type {any} */
+		let attestation = null;
+		if (witness) {
+			const payload = {
+				format: WITNESS_ATTESTATION_FORMAT,
+				task_hash: opts.taskHash,
+				contender_id: record.contender_id,
+				baseline: record.baseline,
+				contributing_shas: [...record.contributing_shas].sort(),
+				candidate_sha: record.candidate_sha,
+				candidate_tree: parseCommitObject(body).tree,
+				capsule_id: record.status === "RESOLVED" ? capsule : null,
+				witness_manifest_sha256: record.witness_manifest_sha256 ?? null,
+				witness_report_sha256: witness.witness_report_sha256,
+				verdict: witness.verdict,
+				review_cleared_by: witness.review_cleared_by ?? null,
+			};
+			const { signature } = await opts.witnessSigner.sign(attestationBytes(/** @type {any} */ (payload)));
+			attestation = { payload, signature };
+		}
+		out.push({ ...record, admission_proof: { commit_object: raw.toString("base64"), attestation } });
+	}
+	return out;
 }
