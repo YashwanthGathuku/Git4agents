@@ -175,6 +175,7 @@ describe("resolution lease", () => {
 		// read-only; this test checks cleanup, so it runs without bubblewrap.
 		const saved = process.env.MADGRIX_RESOLVER_SANDBOX;
 		process.env.MADGRIX_RESOLVER_SANDBOX = "none";
+		process.env.MADGRIX_I_ACCEPT_UNSANDBOXED_RESOLVER = "1";
 		try {
 			resolveComposition(
 				repo,
@@ -182,7 +183,8 @@ describe("resolution lease", () => {
 				`printf '%s\\n' 'export const label = "api+ui";' > src/contract.js && dirname "$MADGRIX_CONFLICT_PATH" > ${JSON.stringify(probe)}`,
 			);
 		} finally {
-			if (saved === undefined) delete process.env.MADGRIX_RESOLVER_SANDBOX;
+			delete process.env.MADGRIX_I_ACCEPT_UNSANDBOXED_RESOLVER;
+		if (saved === undefined) delete process.env.MADGRIX_RESOLVER_SANDBOX;
 			else process.env.MADGRIX_RESOLVER_SANDBOX = saved;
 		}
 		const inputDir = spawnSync("cat", [probe], { encoding: "utf8" }).stdout.trim();

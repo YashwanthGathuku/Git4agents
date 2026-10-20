@@ -4,14 +4,12 @@
  * - Its own process group, killed with every descendant when it exits or
  *   times out (sandbox-reaper.mjs).
  * - stdout and stderr go to files, so there is no output cap.
- * - With bubblewrap (`bwrap`, used when it works on this host, or required
- *   with MADGRIX_RESOLVER_SANDBOX=bwrap): a new PID namespace and /proc, so
+ * - Bubblewrap is mandatory (see sandboxMode): a new PID namespace and /proc, so
  *   the parent's /proc/<pid>/environ is not reachable; the whole file system
  *   read-only (other runs' witness trees included); ~/.madgrix hidden; only
  *   the work directory and a private TMPDIR writable.
- * - MADGRIX_RESOLVER_SANDBOX=none skips bubblewrap; the process-group reaper
- *   still runs. Without bubblewrap a same-uid command can still read other
- *   processes' /proc entries and write anywhere the uid can.
+ * - MADGRIX_RESOLVER_SANDBOX=none plus MADGRIX_I_ACCEPT_UNSANDBOXED_RESOLVER=1
+ *   skips bubblewrap with a warning; the process-group reaper still runs.
  */
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -27,6 +25,11 @@ export const DEFAULT_RESOLVER_TIMEOUT_MS = 10 * 60_000;
 /** @type {boolean | null} */
 let bwrapWorks = null;
 
+/** Test hook: force the bubblewrap probe result (null re-probes). */
+export function setBubblewrapAvailableForTest(/** @type {boolean | null} */ value) {
+	bwrapWorks = value;
+}
+
 /** True when bubblewrap can create a PID namespace here. */
 export function bubblewrapAvailable() {
 	if (bwrapWorks !== null) return bwrapWorks;
@@ -38,16 +41,40 @@ export function bubblewrapAvailable() {
 	return bwrapWorks;
 }
 
-/** "bwrap" or "none" for this run. */
+/** The explicit opt-in that `MADGRIX_RESOLVER_SANDBOX=none` also needs. */
+export const UNSANDBOXED_OPT_IN = "MADGRIX_I_ACCEPT_UNSANDBOXED_RESOLVER";
+
+let warned = false;
+
+/**
+ * "bwrap" or "none" for this run. The default is bwrap, and it is required:
+ * when bubblewrap cannot create a sandbox the call throws, so the resolver
+ * never runs and the attempt is refused (REVIEW). "none" is honoured only
+ * with MADGRIX_I_ACCEPT_UNSANDBOXED_RESOLVER=1 as well, and prints a warning
+ * on stderr: without bubblewrap a resolver can read other processes'
+ * /proc/<pid>/environ and write anywhere this uid can.
+ * @param {NodeJS.ProcessEnv} [env]
+ */
 export function sandboxMode(env = process.env) {
-	const wanted = env.MADGRIX_RESOLVER_SANDBOX ?? "auto";
-	if (wanted === "none") return "none";
-	if (wanted === "bwrap") {
-		if (!bubblewrapAvailable()) throw new Error("MADGRIX_RESOLVER_SANDBOX=bwrap, but bubblewrap cannot create a sandbox here");
-		return "bwrap";
+	const wanted = env.MADGRIX_RESOLVER_SANDBOX ?? "bwrap";
+	if (wanted === "none") {
+		if (env[UNSANDBOXED_OPT_IN] !== "1") {
+			throw new Error(`MADGRIX_RESOLVER_SANDBOX=none also needs ${UNSANDBOXED_OPT_IN}=1; refusing to run the resolver unsandboxed`);
+		}
+		if (!warned) {
+			warned = true;
+			process.stderr.write(
+				"WARNING: MADGRIX_RESOLVER_SANDBOX=none — the resolver runs WITHOUT bubblewrap. It can read other processes' " +
+					"/proc/<pid>/environ (tokens) and write anywhere this user can. Use only for local debugging.\n",
+			);
+		}
+		return "none";
 	}
-	if (wanted !== "auto") throw new Error(`MADGRIX_RESOLVER_SANDBOX must be auto, bwrap or none, not ${wanted}`);
-	return bubblewrapAvailable() ? "bwrap" : "none";
+	if (wanted !== "bwrap") throw new Error(`MADGRIX_RESOLVER_SANDBOX must be bwrap or none, not ${wanted}`);
+	if (!bubblewrapAvailable()) {
+		throw new Error("bubblewrap (bwrap) cannot create a sandbox on this host; refusing to run the resolver unsandboxed");
+	}
+	return "bwrap";
 }
 
 /**

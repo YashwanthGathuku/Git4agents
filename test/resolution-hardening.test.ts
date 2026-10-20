@@ -96,9 +96,11 @@ const LAZY = `printf "x = 'A'\\n" > a.js`;
 function withSandbox<T>(mode: string, fn: () => T): T {
 	const saved = process.env.MADGRIX_RESOLVER_SANDBOX;
 	process.env.MADGRIX_RESOLVER_SANDBOX = mode;
+	process.env.MADGRIX_I_ACCEPT_UNSANDBOXED_RESOLVER = "1";
 	try {
 		return fn();
 	} finally {
+		delete process.env.MADGRIX_I_ACCEPT_UNSANDBOXED_RESOLVER;
 		if (saved === undefined) delete process.env.MADGRIX_RESOLVER_SANDBOX;
 		else process.env.MADGRIX_RESOLVER_SANDBOX = saved;
 	}
