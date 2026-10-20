@@ -110,6 +110,8 @@ interface Env {
 	AGENT_SERVICE_TOKEN: string;
 	/** Ed25519 PKCS8 (PEM or base64) the TaskAuthority signs promotion bundles with. */
 	AUTHORITY_SIGNING_KEY?: string;
+	/** SPKI DER hex of the witness runner key; when set, COMPOSED/RESOLVED need an admission proof. */
+	MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string;
 	PROMOTION_CONTAINER: DoNamespace;
 	/** The PromotionWorkflow binding: one instance per permit, id = permit_id. */
 	PROMOTION_WORKFLOW: WorkflowBindingLike;

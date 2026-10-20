@@ -40,6 +40,7 @@ import { mergeArtifactAdmissionRefuses, reportedMergeArtifactPaths } from "./mer
 import { validateAncestryProof, type AncestryProof } from "./ancestry-proof.ts";
 import { verifyReveal } from "./verifiers.ts";
 import { buildConflictCapsuleV2 } from "./conflict-capsule.ts";
+import { verifyAdmissionProof } from "./admission-proof.ts";
 import {
 	normalizeDigest,
 	normalizeHunks,
@@ -94,6 +95,11 @@ export interface Ctx {
 	sha256Hex(i: string | Uint8Array): Promise<string>;
 	selectorPolicyHash: string;
 	policyVersion: string;
+	/**
+	 * SPKI DER (hex) of the witness runner's Ed25519 key. When set, COMPOSED
+	 * and RESOLVED records must carry an admission proof (admission-proof.ts).
+	 */
+	witnessRunnerPublicKey?: string | null;
 }
 
 export function defaultCtx(selectorPolicyHash: string): Ctx {
@@ -1508,6 +1514,32 @@ export async function recordComposition(
 				throw new Error("recordComposition: the witness check ran another manifest than the composition names");
 			}
 		}
+	}
+	if (ctx.witnessRunnerPublicKey && compositionPromotable(composition.status) && composition.candidate_sha) {
+		const witness =
+			composition.status === "RESOLVED"
+				? composition.resolution?.witness ?? null
+				: composition.witness_check ?? null;
+		await verifyAdmissionProof(
+			(input as { admission_proof?: unknown }).admission_proof,
+			{
+				task_hash: state.task.task_hash,
+				contender_id: composition.contender_id,
+				baseline: composition.baseline,
+				contributing_shas: composition.contributing_shas,
+				candidate_sha: composition.candidate_sha,
+				capsule_id: composition.status === "RESOLVED" ? composition.capsule_id ?? null : null,
+				witness_manifest_sha256: composition.witness_manifest_sha256 ?? null,
+				witness: witness
+					? {
+							witness_report_sha256: witness.witness_report_sha256,
+							verdict: witness.verdict,
+							review_cleared_by: witness.review_cleared_by ?? null,
+						}
+					: null,
+			},
+			ctx.witnessRunnerPublicKey,
+		);
 	}
 	if (current) {
 		if (current.contender_id !== composition.contender_id) {

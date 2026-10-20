@@ -491,6 +491,8 @@ export interface CompositionRecord {
 	resolution?: CompositionResolution | null;
 	/** COMPOSED only: required when member claims were RED or BLOCKED. */
 	witness_check?: WitnessCheck | null;
+	/** Input only, checked when a witness runner key is pinned; not stored. */
+	admission_proof?: import("./admission-proof.ts").AdmissionProof | null;
 }
 
 /**

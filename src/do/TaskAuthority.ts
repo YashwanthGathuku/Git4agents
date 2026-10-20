@@ -125,8 +125,9 @@ async function selectorPolicyHash(): Promise<string> {
 
 /** Production Ctx for ingestQueueEvent: real wall-clock time, real
  *  randomness, WebCrypto SHA-256, frozen policy identity. */
-async function productionCtx(): Promise<Ctx> {
+async function productionCtx(env?: { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string }): Promise<Ctx> {
 	return {
+		witnessRunnerPublicKey: env?.MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?.trim() || null,
 		now: () => new Date().toISOString(),
 		randomHex,
 		sha256Hex,
@@ -201,7 +202,7 @@ export class TaskAuthority {
 				// plaintext secrets never reach the authority.
 				agent_enrollment?: Record<string, string>;
 			};
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const existing = await this.loadState();
 				if (existing !== null) {
@@ -236,7 +237,7 @@ export class TaskAuthority {
 				return json({ error: "invalid_event", detail: "body.event must be a QueuePushEvent" }, 400);
 			}
 			const reconciliation = body.reconciliation ?? null;
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) {
@@ -273,7 +274,7 @@ export class TaskAuthority {
 			if (agent_secret !== undefined && typeof agent_secret !== "string") {
 				return json({ error: "invalid_agent_secret" }, 400);
 			}
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -309,7 +310,7 @@ export class TaskAuthority {
 			if (!contender || typeof contender.contender_id !== "string") {
 				return json({ error: "invalid_contender" }, 400);
 			}
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -335,7 +336,7 @@ export class TaskAuthority {
 			// The zone check in submitEvaluation still decides, so a caller
 			// that names no zone is "unknown" and is refused (fail closed).
 			const caller: CallerIdentity = body.caller ?? { zone: "unknown" };
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -378,7 +379,7 @@ export class TaskAuthority {
 			if (!Array.isArray(candidate_shas) || !candidate_shas.every((x) => typeof x === "string")) {
 				return json({ error: "invalid_candidate_shas" }, 400);
 			}
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -400,7 +401,7 @@ export class TaskAuthority {
 			if (!parsed.ok) return parsed.response;
 			const commitment = (parsed.body as { commitment?: VerifierCommitment }).commitment;
 			if (!commitment || typeof commitment.verifier_id !== "string") return json({ error: "invalid_commitment" }, 400);
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -420,7 +421,7 @@ export class TaskAuthority {
 			if (!parsed.ok) return parsed.response;
 			const body = parsed.body as { verifier_id?: string; report?: ReferenceReport; nonce?: string };
 			if (!body.verifier_id || !body.report || typeof body.nonce !== "string") return json({ error: "invalid_reveal" }, 400);
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -436,7 +437,7 @@ export class TaskAuthority {
 			if (!parsed.ok) return parsed.response;
 			const report = (parsed.body as { report?: VerdictReport }).report;
 			if (!report || typeof report.verifier_id !== "string") return json({ error: "invalid_verifier_report" }, 400);
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -456,7 +457,7 @@ export class TaskAuthority {
 			if (!parsed.ok) return parsed.response;
 			const candidates = (parsed.body as { candidates?: unknown }).candidates;
 			if (!Array.isArray(candidates)) return json({ error: "invalid_candidates" }, 400);
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -476,7 +477,7 @@ export class TaskAuthority {
 			if (!parsed.ok) return parsed.response;
 			const body = parsed.body as { winner_sha?: string; destination_repo?: string; destination_head?: string };
 			if (!body.winner_sha || !body.destination_repo || !body.destination_head) return json({ error: "invalid_permit_request" }, 400);
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -519,7 +520,7 @@ export class TaskAuthority {
 			if (!parsed.ok) return parsed.response;
 			const composition = (parsed.body as { composition?: CompositionRecord }).composition;
 			if (!composition || typeof composition !== "object") return json({ error: "invalid_composition" }, 400);
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -542,7 +543,7 @@ export class TaskAuthority {
 			if (!parsed.ok) return parsed.response;
 			const report = (parsed.body as { report?: RebaseReport }).report;
 			if (!report || typeof report !== "object") return json({ error: "invalid_rebase_report" }, 400);
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -569,7 +570,7 @@ export class TaskAuthority {
 			if (!parsed.ok) return parsed.response;
 			const permit_id = (parsed.body as { permit_id?: unknown }).permit_id;
 			if (typeof permit_id !== "string" || permit_id === "") return json({ error: "invalid_promotion_begin" }, 400);
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -607,7 +608,7 @@ export class TaskAuthority {
 			if (typeof body.permit_id !== "string" || body.permit_id === "" || typeof body.promotion_nonce !== "string" || body.promotion_nonce === "") {
 				return json({ error: "invalid_promotion_abort" }, 400);
 			}
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
@@ -657,7 +658,7 @@ export class TaskAuthority {
 			} catch (err) {
 				return json({ error: "authority_signing_key_unavailable", detail: (err as Error).message }, 503);
 			}
-			const ctx = await productionCtx();
+			const ctx = await productionCtx(this.doEnv as { MADGRIX_WITNESS_RUNNER_PUBLIC_KEY?: string });
 			return this.doState.storage.transaction(async () => {
 				const state = await this.loadState();
 				if (state === null) return json({ error: "not_initialized" }, 404);
