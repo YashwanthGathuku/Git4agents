@@ -18,7 +18,9 @@ import { resolveWithLadder } from "../scripts/lib/resolve-ladder.mjs";
 import { bubblewrapAvailable, setBubblewrapAvailableForTest } from "../scripts/lib/sandbox.mjs";
 import { freezeWitnesses, loadWitnesses } from "../scripts/lib/witness.mjs";
 import { sha256Hex } from "../src/lib/canonical.ts";
-import { createEd25519Signer } from "../src/lib/signer-node.ts";
+import { generateKeyPairSync } from "node:crypto";
+import { witnessSignerFromKey } from "../scripts/lib/admission.mjs";
+const createEd25519Signer = () => witnessSignerFromKey(generateKeyPairSync("ed25519").privateKey);
 import { createAuthority, recordComposition, type Ctx } from "../src/lib/task-state.ts";
 import type { AuthorityState, CompositionRecord } from "../src/lib/types.ts";
 
@@ -170,8 +172,8 @@ function authority(baseline: string): AuthorityState {
 	state.contenders.c1 = { contender_id: "c1", agent_id: "parent", fork_repo: "f", fork_lineage: { parent_repo: "r", parent_commit: baseline }, fork_base: baseline, token_id: "tok", status: "forked", claim_work_id: null, latest_commit: null };
 	return state;
 }
-function ctxWith(key: string | null): Ctx {
-	return { now: () => "2026-10-20T00:00:00.000Z", randomHex: (n) => "e".repeat(n * 2), sha256Hex, selectorPolicyHash: "p", policyVersion: "seam-policy/0.1.0", witnessRunnerPublicKey: key };
+function ctxWith(key: string | null, insecure = false): Ctx {
+	return { now: () => "2026-10-20T00:00:00.000Z", randomHex: (n) => "e".repeat(n * 2), sha256Hex, selectorPolicyHash: "p", policyVersion: "seam-policy/0.1.0", witnessRunnerPublicKey: key, insecureUnpinnedWitnessRunner: insecure };
 }
 async function recordAll(state: AuthorityState, records: CompositionRecord[], ctx: Ctx) {
 	for (const r of records) state = await recordComposition(state, r, ctx);
@@ -182,15 +184,15 @@ describe("item 3: admission proof binds the witness verdict and the candidate co
 	it("a signed, real candidate is accepted; forged digest, made-up SHA, missing proof and another key are refused", async () => {
 		const repo = mkRepo({ "a.js": "x = 0\n" });
 		const c = await conflict(repo);
-		const runner = createEd25519Signer();
+		const runner = await createEd25519Signer();
 		const g = await govern(repo, c, { witnessSigner: runner });
 		assert.equal(g.status, "RESOLVED");
 		const [conflicted, resolved] = g.compositions as CompositionRecord[];
 		assert.ok(resolved.admission_proof?.attestation);
-		const ctx = ctxWith(runner.publicKeyDerHex);
+		const ctx = ctxWith(runner.publicKeySpkiHex);
 		const ok = await recordAll(authority(c.run.baseline), [conflicted, resolved], ctx);
 		assert.equal(ok.composition?.status, "RESOLVED");
-		assert.equal("admission_proof" in (ok.composition ?? {}), false, "the proof is checked, not stored");
+		assert.ok(ok.composition?.admission_proof?.attestation, "the verified proof is stored (round 4)");
 
 		const base = await recordComposition(authority(c.run.baseline), conflicted, ctx);
 		const forged = structuredClone(resolved);
@@ -203,10 +205,10 @@ describe("item 3: admission proof binds the witness verdict and the candidate co
 		delete bare.admission_proof;
 		await assert.rejects(recordComposition(base, bare, ctx), /requires an admission_proof/);
 		const noAtt = structuredClone(resolved);
-		noAtt.admission_proof!.attestation = null;
-		await assert.rejects(recordComposition(base, noAtt, ctx), /needs a witness runner attestation/);
-		const other = createEd25519Signer();
-		await assert.rejects(recordComposition(await recordComposition(authority(c.run.baseline), conflicted, ctxWith(other.publicKeyDerHex)), resolved, ctxWith(other.publicKeyDerHex)), /does not verify/);
+		delete (noAtt.admission_proof as { attestation?: unknown }).attestation;
+		await assert.rejects(recordComposition(base, noAtt, ctx), /carries no witness runner attestation/);
+		const other = await createEd25519Signer();
+		await assert.rejects(recordComposition(await recordComposition(authority(c.run.baseline), conflicted, ctxWith(other.publicKeySpkiHex)), resolved, ctxWith(other.publicKeySpkiHex)), /does not verify|not pinned/);
 		// A real commit that is not this composition (the baseline's own commit object) fails on parents.
 		const wrong = structuredClone(resolved);
 		wrong.candidate_sha = c.run.commits[0].sha;
@@ -214,13 +216,14 @@ describe("item 3: admission proof binds the witness verdict and the candidate co
 		await assert.rejects(recordComposition(base, wrong, ctx), /must be new|parents/);
 	});
 
-	it("without a pinned key the authority behaves as before (documented gap)", async () => {
+	it("without a pinned key the authority refuses (round 4); only the insecure dev opt-in accepts", async () => {
 		const repo = mkRepo({ "a.js": "x = 0\n" });
 		const c = await conflict(repo);
 		const g = await govern(repo, c);
 		const [conflicted, resolved] = g.compositions as CompositionRecord[];
 		const madeUp = { ...structuredClone(resolved), candidate_sha: "7".repeat(40) };
-		const state = await recordAll(authority(c.run.baseline), [conflicted, madeUp], ctxWith(null));
+		await assert.rejects(recordAll(authority(c.run.baseline), [conflicted, madeUp], ctxWith(null)), /no witness runner key is pinned/);
+		const state = await recordAll(authority(c.run.baseline), [conflicted, madeUp], ctxWith(null, true));
 		assert.equal(state.composition?.status, "RESOLVED");
 	});
 
@@ -231,9 +234,9 @@ describe("item 3: admission proof binds the witness verdict and the candidate co
 			{ id: "s2", command: "echo B > b.js" },
 		]);
 		const run = await runCrewOnFork(repo, loadForkCrew(cfg), undefined, noGate);
-		const runner = createEd25519Signer();
+		const runner = await createEd25519Signer();
 		const g = await governCrewResult(repo, run, { taskHash: TASK, contenderId: "c1", witnesses: null, frozen: null, mode: "command", witnessSigner: runner });
-		const ctx = ctxWith(runner.publicKeyDerHex);
+		const ctx = ctxWith(runner.publicKeySpkiHex);
 		const [composed] = g.compositions as CompositionRecord[];
 		assert.equal((await recordComposition(authority(run.baseline), composed, ctx)).composition?.status, "COMPOSED");
 		await assert.rejects(recordComposition(authority(run.baseline), { ...composed, admission_proof: null }, ctx), /requires an admission_proof/);
@@ -253,7 +256,9 @@ describe("item 4: main moves only by compare-and-swap", () => {
 		assert.equal(git(repo, ["rev-parse", "main"]), g1.candidateSha);
 	});
 
-	it("two concurrent COMPOSED crews: exactly one publishes, the other fails with MainMovedError", async () => {
+	it("two concurrent COMPOSED crews with rebase-retry off: exactly one publishes, the other fails with MainMovedError", async () => {
+		process.env.MADGRIX_MAIN_REBASE_RETRIES = "0";
+		after(() => delete process.env.MADGRIX_MAIN_REBASE_RETRIES);
 		const repo = mkRepo({ "a.js": "a\n", "b.js": "b\n", "c.js": "c\n", "d.js": "d\n" });
 		const crewOf = (x: string, y: string) => loadForkCrew(mkCrew([{ id: `p${x}`, command: `sleep 0.2; echo ${x}${x} > ${x}.js` }, { id: `q${y}`, command: `echo ${y}${y} > ${y}.js` }]));
 		const results = await Promise.allSettled([runCrewOnFork(repo, crewOf("a", "b"), undefined, noGate), runCrewOnFork(repo, crewOf("c", "d"), undefined, noGate)]);
@@ -263,6 +268,7 @@ describe("item 4: main moves only by compare-and-swap", () => {
 		assert.equal(bad.length, 1);
 		assert.ok(bad[0].reason instanceof MainMovedError, String(bad[0].reason));
 		assert.equal(git(repo, ["rev-parse", "main"]), (ok[0] as PromiseFulfilledResult<{ sha: string }>).value.sha);
+		delete process.env.MADGRIX_MAIN_REBASE_RETRIES;
 	});
 
 	it("a crew refuses to start when HEAD is not main", async () => {

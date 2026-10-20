@@ -39,6 +39,9 @@ function makeCtx(): Ctx {
 		randomHex: (n: number) => "e".repeat(n * 2),
 		sha256Hex,
 		selectorPolicyHash: "policyhash",
+		// Unit tests of other authority rules over synthetic SHAs: the admission
+		// proof itself is covered in resolution-hardening-v3/v4 with a real key.
+		insecureUnpinnedWitnessRunner: true,
 		policyVersion: "seam-policy/0.1.0",
 	};
 }
@@ -316,13 +319,18 @@ describe("offline verify of a resolved promotion", () => {
 		return { bundle, signer, pin, capsule: state.composition?.capsule_id as string };
 	}
 
-	it("a resolved candidate's bundle carries its resolution and verifies with the capsule named", async () => {
+	it("a resolution recorded with no witness runner key pinned (insecure opt-in) carries no proof and is NOT VERIFIED", async () => {
+		// The VERIFIED path, with a real signed admission proof, is in
+		// test/resolution-hardening-v4.test.ts.
 		const { bundle, signer, pin, capsule } = await promotedResolution();
 		assert.equal(bundle.resolution?.resolution.capsule_id, capsule);
 		const { lines, verified } = await verifyBundle(bundle, signer, pin);
-		assert.equal(verified, true, JSON.stringify(lines.filter((l) => l.status === "FAIL")));
+		assert.equal(verified, false);
 		const line = lines.find((l) => l.label === "resolution");
-		assert.equal(line?.status, `CAPSULE ${capsule.slice(0, 12)} · replay · witnesses ADMIT`);
+		assert.equal(line?.status, "FAIL");
+		assert.match(line?.detail ?? "", /carries no admission proof/);
+		// Every other line still verifies.
+		assert.deepEqual(lines.filter((l) => l.status === "FAIL").map((l) => l.label), ["resolution"]);
 	});
 
 	it("an edited capsule id, a stripped resolution, or a resolution for another commit is NOT VERIFIED", async () => {

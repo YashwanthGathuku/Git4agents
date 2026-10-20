@@ -52,6 +52,9 @@ function makeCtx(): Ctx {
 		randomHex: (n: number) => "a".repeat(n * 2),
 		sha256Hex,
 		selectorPolicyHash: "policyhash",
+		// Unit tests of other authority rules over synthetic SHAs: the admission
+		// proof itself is covered in resolution-hardening-v3/v4 with a real key.
+		insecureUnpinnedWitnessRunner: true,
 		policyVersion: "seam-policy/0.1.0",
 	};
 }
