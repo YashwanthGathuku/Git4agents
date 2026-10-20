@@ -54,35 +54,37 @@ let warned = false;
  * on stderr: without bubblewrap a resolver can read other processes'
  * /proc/<pid>/environ and write anywhere this uid can.
  * @param {NodeJS.ProcessEnv} [env]
+ * @param {"resolver" | "witness"} [purpose]
  */
-export function sandboxMode(env = process.env) {
-	const wanted = env.MADGRIX_RESOLVER_SANDBOX ?? "bwrap";
+export function sandboxMode(env = process.env, purpose = "resolver") {
+	// Witness replays follow MADGRIX_WITNESS_SANDBOX, else the resolver setting.
+	const wanted = (purpose === "witness" ? env.MADGRIX_WITNESS_SANDBOX : undefined) ?? env.MADGRIX_RESOLVER_SANDBOX ?? "bwrap";
 	if (wanted === "none") {
 		if (env[UNSANDBOXED_OPT_IN] !== "1") {
-			throw new Error(`MADGRIX_RESOLVER_SANDBOX=none also needs ${UNSANDBOXED_OPT_IN}=1; refusing to run the resolver unsandboxed`);
+			throw new Error(`sandbox none also needs ${UNSANDBOXED_OPT_IN}=1; refusing to run the ${purpose} unsandboxed`);
 		}
 		if (!warned) {
 			warned = true;
 			process.stderr.write(
-				"WARNING: MADGRIX_RESOLVER_SANDBOX=none — the resolver runs WITHOUT bubblewrap. It can read other processes' " +
+				"WARNING: MADGRIX_RESOLVER_SANDBOX=none (or MADGRIX_WITNESS_SANDBOX=none) — resolvers and witness replays run WITHOUT bubblewrap. They can read other processes' " +
 					"/proc/<pid>/environ (tokens) and write anywhere this user can. Use only for local debugging.\n",
 			);
 		}
 		return "none";
 	}
-	if (wanted !== "bwrap") throw new Error(`MADGRIX_RESOLVER_SANDBOX must be bwrap or none, not ${wanted}`);
+	if (wanted !== "bwrap") throw new Error(`MADGRIX_RESOLVER_SANDBOX / MADGRIX_WITNESS_SANDBOX must be bwrap or none, not ${wanted}`);
 	if (!bubblewrapAvailable()) {
-		throw new Error("bubblewrap (bwrap) cannot create a sandbox on this host; refusing to run the resolver unsandboxed");
+		throw new Error(`bubblewrap (bwrap) cannot create a sandbox on this host; refusing to run the ${purpose} unsandboxed`);
 	}
 	return "bwrap";
 }
 
 /**
- * @param {{ command: string, cwd: string, writable: string[], readOnly?: string[], env: Record<string, string>, timeoutMs?: number }} opts
+ * @param {{ command: string, cwd: string, writable: string[], readOnly?: string[], env: Record<string, string>, timeoutMs?: number, purpose?: "resolver" | "witness" }} opts
  * @returns {{ status: number | null, signal: string | null, timedOut: boolean, error: string | null, stderrTail: string, sandbox: "bwrap" | "none" }}
  */
 export function runContained(opts) {
-	const mode = sandboxMode();
+	const mode = sandboxMode(process.env, opts.purpose ?? "resolver");
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_RESOLVER_TIMEOUT_MS;
 	const nonce = randomBytes(16).toString("hex");
 	const ctl = mkdtempSync(path.join(os.tmpdir(), "madgrix-sandbox-ctl-"));

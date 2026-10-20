@@ -26,7 +26,10 @@
  * Children get the minimal environment only.
  */
 
-import { spawnSync } from "node:child_process";
+import { runContained } from "./sandbox.mjs";
+
+/** @param {string} s */
+const shellQuote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -179,13 +182,18 @@ function checkouts(repo) {
 function run(trees, script, sha, timeoutMs) {
 	const cwd = trees.tree(sha);
 	const file = trees.scriptFile(script);
-	const r = spawnSync(script.kind === "node" ? process.execPath : "bash", [file], {
+	// The replay runs candidate code: contained like a resolver (bubblewrap,
+	// fail closed; sandbox.mjs). Only its own checkout is writable.
+	const interpreter = script.kind === "node" ? process.execPath : "bash";
+	const r = runContained({
+		command: `exec ${shellQuote(interpreter)} ${shellQuote(file)}`,
 		cwd,
-		encoding: "utf8",
-		timeout: timeoutMs,
+		writable: [cwd],
 		env: minimalEnv({ MADGRIX_WITNESS_ID: script.id }),
+		timeoutMs,
+		purpose: "witness",
 	});
-	return r.status === 0 && !r.error ? "pass" : "fail";
+	return r.status === 0 && !r.timedOut && !r.error ? "pass" : "fail";
 }
 
 /**
