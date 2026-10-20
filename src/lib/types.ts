@@ -491,7 +491,14 @@ export interface CompositionRecord {
 	resolution?: CompositionResolution | null;
 	/** COMPOSED only: required when member claims were RED or BLOCKED. */
 	witness_check?: WitnessCheck | null;
-	/** Input only, checked when a witness runner key is pinned; not stored. */
+	/**
+	 * COMPOSED/RESOLVED only: the main the candidate was rebased onto after
+	 * losing a compare-and-swap (its first parent instead of the baseline).
+	 * Vouched for by the witness runner's attestation; the authority cannot
+	 * check that it descends from the baseline.
+	 */
+	rebased_onto?: string | null;
+	/** The verified admission proof (admission-proof.ts), stored as recorded. */
 	admission_proof?: import("./admission-proof.ts").AdmissionProof | null;
 }
 

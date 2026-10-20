@@ -39,6 +39,7 @@ import { verifyLedgerChain } from "./ledger.ts";
 import { buildPermitId } from "./permit.ts";
 import type { LedgerEntry } from "./types.ts";
 import type { ResolutionPayload } from "./resolution-authority.ts";
+import { verifyAdmissionProof, type WitnessRunnerKeys } from "./admission-proof.ts";
 
 /* ------------------------------------------------------------------ */
 /* in-toto statement                                                   */
@@ -308,7 +309,7 @@ function subjectDigest(s: InTotoStatement | null): string | null {
 export async function verifyBundle(
 	bundle: PromotionBundle,
 	signer: Signer,
-	opts: { policyHash: string; trustedKeyDerHex: string },
+	opts: { policyHash: string; trustedKeyDerHex: string; witnessRunnerKeys?: WitnessRunnerKeys | null },
 ): Promise<{ lines: VerifyLine[]; verified: boolean }> {
 	const lines: VerifyLine[] = [];
 	const fail = (label: string, detail: string): void => {
@@ -478,12 +479,48 @@ export async function verifyBundle(
 		} else if (r.candidate_sha !== bundle.ship.commit) {
 			fail("resolution", "the bundle's resolution names another candidate than the promoted commit");
 		} else {
+			// The admission proof is re-checked offline under the verifier's own
+			// pinned witness runner keys (admission-proof.ts); a resolution
+			// without one is not verifiable.
 			const w = r.resolution?.witness;
-			const verdict = w?.verdict === "REVIEW" ? `REVIEW cleared by ${w.review_cleared_by}` : w?.verdict;
-			lines.push({
-				label: "resolution",
-				status: `CAPSULE ${String(r.resolution?.capsule_id).slice(0, 12)} · ${r.resolution?.rung} · witnesses ${verdict}`,
-			});
+			let proofFailure: string | null = null;
+			if (!r.admission_proof) proofFailure = "the resolution carries no admission proof (recorded by an authority with no witness runner key pinned)";
+			else if (!opts.witnessRunnerKeys || opts.witnessRunnerKeys.keys.length === 0) proofFailure = "no witness runner key is pinned for verify (--witness-key)";
+			else {
+				try {
+					await verifyAdmissionProof(
+						r.admission_proof,
+						{
+							task_hash: String(ap?.intent?.digest ?? ""),
+							contender_id: r.contender_id,
+							baseline: r.baseline,
+							rebased_onto: r.rebased_onto ?? null,
+							contributing_shas: r.contributing_shas ?? [],
+							candidate_sha: r.candidate_sha,
+							capsule_id: r.resolution?.capsule_id ?? null,
+							witness_manifest_sha256: r.resolution?.witness?.witness_manifest_sha256 ?? null,
+							witness: w
+								? { witness_report_sha256: w.witness_report_sha256, verdict: w.verdict, review_cleared_by: w.review_cleared_by ?? null }
+								: null,
+							bound_paths: [...(r.resolution?.lease?.paths ?? [])],
+							tree_digest_v1: bundle.ship.tree_sha256,
+						},
+						opts.witnessRunnerKeys,
+						"admission proof",
+					);
+				} catch (error) {
+					proofFailure = (error as Error).message;
+				}
+			}
+			if (proofFailure !== null) {
+				fail("resolution", proofFailure);
+			} else {
+				const verdict = w?.verdict === "REVIEW" ? `REVIEW cleared by ${w.review_cleared_by}` : w?.verdict;
+				lines.push({
+					label: "resolution",
+					status: `CAPSULE ${String(r.resolution?.capsule_id).slice(0, 12)} · ${r.resolution?.rung} · witnesses ${verdict} · proof ${r.admission_proof?.attestation.key_id}`,
+				});
+			}
 		}
 	}
 

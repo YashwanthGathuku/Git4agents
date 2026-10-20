@@ -40,7 +40,7 @@ import { mergeArtifactAdmissionRefuses, reportedMergeArtifactPaths } from "./mer
 import { validateAncestryProof, type AncestryProof } from "./ancestry-proof.ts";
 import { verifyReveal } from "./verifiers.ts";
 import { buildConflictCapsuleV2 } from "./conflict-capsule.ts";
-import { verifyAdmissionProof } from "./admission-proof.ts";
+import { parseWitnessRunnerKeys, verifyAdmissionProof, type WitnessRunnerKeys } from "./admission-proof.ts";
 import {
 	normalizeDigest,
 	normalizeHunks,
@@ -96,10 +96,25 @@ export interface Ctx {
 	selectorPolicyHash: string;
 	policyVersion: string;
 	/**
-	 * SPKI DER (hex) of the witness runner's Ed25519 key. When set, COMPOSED
-	 * and RESOLVED records must carry an admission proof (admission-proof.ts).
+	 * Pinned witness runner keys (admission-proof.ts). COMPOSED and RESOLVED
+	 * records must carry an admission proof that verifies under one of them.
+	 * With no key pinned the authority refuses such records, unless
+	 * `insecureUnpinnedWitnessRunner` is set (dev only; prints a warning).
 	 */
+	witnessRunnerKeys?: WitnessRunnerKeys | null;
+	/** One SPKI DER (hex) key; shorthand for witnessRunnerKeys with that key alone. */
 	witnessRunnerPublicKey?: string | null;
+	/** INSECURE dev opt-in: record COMPOSED/RESOLVED without an admission proof. */
+	insecureUnpinnedWitnessRunner?: boolean;
+}
+
+let warnedUnpinned = false;
+
+/** The keys `ctx` pins, or null. */
+export async function pinnedWitnessKeys(ctx: Ctx): Promise<WitnessRunnerKeys | null> {
+	if (ctx.witnessRunnerKeys && ctx.witnessRunnerKeys.keys.length > 0) return ctx.witnessRunnerKeys;
+	if (ctx.witnessRunnerPublicKey) return parseWitnessRunnerKeys(ctx.witnessRunnerPublicKey);
+	return null;
 }
 
 export function defaultCtx(selectorPolicyHash: string): Ctx {
@@ -1437,7 +1452,15 @@ function normalizeComposition(input: CompositionRecord): CompositionRecord {
 		files,
 		candidate_sha: promotable ? input.candidate_sha : null,
 		witness_manifest_sha256: normalizeDigest(input.witness_manifest_sha256, "witness_manifest_sha256"),
+		...(promotable && typeof input.rebased_onto === "string" && input.rebased_onto !== ""
+			? { rebased_onto: normalizeGitSha(input.rebased_onto) }
+			: {}),
 	};
+}
+
+function normalizeGitSha(raw: string): string {
+	if (!/^[0-9a-f]{40}$/.test(raw)) throw new Error("recordComposition: rebased_onto is not a git commit id");
+	return raw;
 }
 
 /**
@@ -1515,31 +1538,50 @@ export async function recordComposition(
 			}
 		}
 	}
-	if (ctx.witnessRunnerPublicKey && compositionPromotable(composition.status) && composition.candidate_sha) {
-		const witness =
-			composition.status === "RESOLVED"
-				? composition.resolution?.witness ?? null
-				: composition.witness_check ?? null;
-		await verifyAdmissionProof(
-			(input as { admission_proof?: unknown }).admission_proof,
-			{
-				task_hash: state.task.task_hash,
-				contender_id: composition.contender_id,
-				baseline: composition.baseline,
-				contributing_shas: composition.contributing_shas,
-				candidate_sha: composition.candidate_sha,
-				capsule_id: composition.status === "RESOLVED" ? composition.capsule_id ?? null : null,
-				witness_manifest_sha256: composition.witness_manifest_sha256 ?? null,
-				witness: witness
-					? {
-							witness_report_sha256: witness.witness_report_sha256,
-							verdict: witness.verdict,
-							review_cleared_by: witness.review_cleared_by ?? null,
-						}
-					: null,
-			},
-			ctx.witnessRunnerPublicKey,
-		);
+	if (compositionPromotable(composition.status) && composition.candidate_sha) {
+		const pinned = await pinnedWitnessKeys(ctx);
+		if (pinned === null) {
+			if (!ctx.insecureUnpinnedWitnessRunner) {
+				throw new Error(
+					`recordComposition: no witness runner key is pinned; refusing to record ${composition.status} ` +
+						"(pin MADGRIX_WITNESS_RUNNER_PUBLIC_KEY; MADGRIX_INSECURE_UNPINNED_WITNESS_RUNNER=1 is for local development only)",
+				);
+			}
+			if (!warnedUnpinned) {
+				warnedUnpinned = true;
+				console.warn(
+					"WARNING: no witness runner key is pinned and the insecure opt-in is set: COMPOSED/RESOLVED records are accepted " +
+						"WITHOUT an admission proof (forged verdicts and made-up candidate SHAs are not detected).",
+				);
+			}
+		} else {
+			const witness =
+				composition.status === "RESOLVED"
+					? composition.resolution?.witness ?? null
+					: composition.witness_check ?? null;
+			composition.admission_proof = await verifyAdmissionProof(
+				(input as { admission_proof?: unknown }).admission_proof,
+				{
+					task_hash: state.task.task_hash,
+					contender_id: composition.contender_id,
+					baseline: composition.baseline,
+					rebased_onto: composition.rebased_onto ?? null,
+					contributing_shas: composition.contributing_shas,
+					candidate_sha: composition.candidate_sha,
+					capsule_id: composition.status === "RESOLVED" ? composition.capsule_id ?? null : null,
+					witness_manifest_sha256: composition.witness_manifest_sha256 ?? null,
+					witness: witness
+						? {
+								witness_report_sha256: witness.witness_report_sha256,
+								verdict: witness.verdict,
+								review_cleared_by: witness.review_cleared_by ?? null,
+							}
+						: null,
+					bound_paths: boundPaths(composition),
+				},
+				pinned,
+			);
+		}
 	}
 	if (current) {
 		if (current.contender_id !== composition.contender_id) {
@@ -1571,9 +1613,17 @@ export async function recordComposition(
 		...(composition.capsule_id ? { capsule_id: composition.capsule_id } : {}),
 		...(composition.witness_manifest_sha256 ? { witness_manifest_sha256: composition.witness_manifest_sha256 } : {}),
 		...(composition.witness_check ? { witness_check: composition.witness_check } : {}),
+		...(composition.rebased_onto ? { rebased_onto: composition.rebased_onto } : {}),
+		...(composition.admission_proof ? { admission_proof_sha256: await ctx.sha256Hex(canonicalJson(composition.admission_proof)) } : {}),
 	}, ctx);
 	const payload = resolutionPayload(composition);
 	return payload === null ? recorded : appendLedger(recorded, "resolution_recorded", payload, ctx);
+}
+
+/** The files an admission proof binds: RESOLVED's leased paths, else the record's files. */
+export function boundPaths(composition: CompositionRecord): string[] {
+	if (composition.status === "RESOLVED" && composition.resolution) return [...composition.resolution.lease.paths].sort();
+	return composition.files.map((file) => file.path).sort();
 }
 
 export type IssuePermitResult =

@@ -21,7 +21,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { createPrivateKey, sign as cryptoSign } from "node:crypto";
+import { createPrivateKey } from "node:crypto";
+import { witnessSignerFromKey } from "./lib/admission.mjs";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -52,9 +53,9 @@ const agentServiceToken = readServiceToken();
  * The witness runner's Ed25519 signer, from MADGRIX_WITNESS_RUNNER_KEY_FILE
  * (PKCS8 PEM). The authority pins the matching public key
  * (MADGRIX_WITNESS_RUNNER_PUBLIC_KEY) and then requires an admission proof.
- * @returns {{ sign(payload: Uint8Array): Promise<{ signature: string }> } | undefined}
+ * @returns {Promise<import("./lib/admission.mjs").WitnessSigner | undefined>}
  */
-function witnessRunnerSigner() {
+async function witnessRunnerSigner() {
 	const file = process.env.MADGRIX_WITNESS_RUNNER_KEY_FILE;
 	if (!file) return undefined;
 	let key;
@@ -64,7 +65,7 @@ function witnessRunnerSigner() {
 		console.error("MADGRIX_WITNESS_RUNNER_KEY_FILE is not a readable PKCS8 key");
 		process.exit(2);
 	}
-	return { sign: async (payload) => ({ signature: cryptoSign(null, payload, key).toString("base64") }) };
+	return witnessSignerFromKey(key);
 }
 
 function readServiceToken() {
@@ -386,7 +387,7 @@ try {
 		mergiraf: "auto",
 		requiredSides: riskySides,
 		reviewClearedBy: process.env.MADGRIX_REVIEW_CLEARED_BY?.trim() || null,
-		witnessSigner: witnessRunnerSigner(),
+		witnessSigner: await witnessRunnerSigner(),
 	});
 	/** @type {string | null} */
 	let candidateSha = governed.candidateSha;

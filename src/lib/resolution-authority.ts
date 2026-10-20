@@ -16,6 +16,7 @@ import type {
 	CompositionResolution,
 	WitnessCheck,
 } from "./types.ts";
+import type { AdmissionProof } from "./admission-proof.ts";
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
@@ -133,6 +134,13 @@ export interface ResolutionPayload {
 	contender_id: string;
 	baseline: string;
 	resolution: CompositionResolution;
+	/**
+	 * Present when the authority verified an admission proof: the proof as
+	 * recorded, and what offline verify needs to check it again.
+	 */
+	contributing_shas?: string[];
+	rebased_onto?: string | null;
+	admission_proof?: AdmissionProof;
 }
 
 export function resolutionPayload(composition: CompositionRecord): ResolutionPayload | null {
@@ -142,6 +150,13 @@ export function resolutionPayload(composition: CompositionRecord): ResolutionPay
 		contender_id: composition.contender_id,
 		baseline: composition.baseline,
 		resolution: composition.resolution,
+		...(composition.admission_proof
+			? {
+					contributing_shas: [...composition.contributing_shas].sort(),
+					rebased_onto: composition.rebased_onto ?? null,
+					admission_proof: composition.admission_proof,
+				}
+			: {}),
 	};
 }
 

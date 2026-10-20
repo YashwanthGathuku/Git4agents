@@ -16,10 +16,14 @@
  *
  * Like `npm run slice`, steps 5's evaluation evidence and signing key are
  * HARNESS values made here, not an evaluator run or the live authority key.
+ * The witness runner key is generated in memory for this run; only its
+ * PUBLIC key is written (next to the bundle) and pinned by the authority and
+ * by the verifier (--witness-key). No private key is written or committed.
  * Steps 1–4 are the real runner code on real commits.
  */
 
 import { spawnSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -42,6 +46,9 @@ import {
 import type { EvaluationBundle } from "../src/lib/types.ts";
 import { DEMO_COMPOSITION_CONFIG, loadForkCrew, runCrewOnFork } from "./lib/fork-crew.mjs";
 import { governCrewResult } from "./lib/governed-resolution.mjs";
+import { witnessSignerFromKey } from "./lib/admission.mjs";
+import { parseWitnessRunnerKeys } from "../src/lib/admission-proof.ts";
+import { treeDigestV1 } from "../src/lib/tree-digest.ts";
 import { freezeWitnesses, loadWitnesses } from "./lib/witness.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -79,7 +86,10 @@ try {
 	const frozen = freezeWitnesses(repo, run.baseline, run.commits, witnesses);
 	for (const [key, o] of Object.entries(frozen.outcomes)) log(`witness ${key}: baseline ${o.baseline}, own commit ${o.own}`);
 
-	const ctx = defaultCtx(await sha256Hex(SELECTOR_POLICY_INPUT));
+	// HARNESS witness runner key, generated for this run (never written).
+	const witnessSigner = await witnessSignerFromKey(generateKeyPairSync("ed25519").privateKey);
+	const ctx = { ...defaultCtx(await sha256Hex(SELECTOR_POLICY_INPUT)), witnessRunnerKeys: await parseWitnessRunnerKeys(witnessSigner.publicKeySpkiHex) };
+	log(`witness runner key ${witnessSigner.keyId} (HARNESS, in memory; pinned by the authority and the verifier)`);
 	const taskHash = await sha256Hex("demo: compose api, ui and an integration check");
 
 	// 3. A lazy resolver.
@@ -105,6 +115,7 @@ try {
 		frozen,
 		mode: "command",
 		command: `node ${JSON.stringify(path.join(repoRoot, "scripts/demo-resolve.mjs"))}`,
+		witnessSigner,
 	});
 	if (governed.status !== "RESOLVED" || !governed.candidateSha) throw new Error(`expected RESOLVED, got ${governed.status}`);
 	const sha = governed.candidateSha;
@@ -139,7 +150,17 @@ try {
 	}
 
 	// 5. HARNESS evaluation evidence, verdict, permit, promotion, signed bundle.
-	const tree = await sha256Hex(git(repo, ["ls-tree", "-r", sha]));
+	// tree-digest/v1 of the candidate (what promote.sh computes), which the
+	// witness attestation also names.
+	const entries = git(repo, ["ls-tree", "-r", "--full-tree", sha]).split("\n").filter(Boolean).map((line) => {
+		const [meta, file] = line.split("\t");
+		const [mode, type, id] = meta.split(" ");
+		const blob = spawnSync("git", ["cat-file", "blob", id], { cwd: repo });
+		return { mode, type, path: file, bytes: new Uint8Array(blob.stdout) };
+	});
+	const digest = await treeDigestV1(entries);
+	if (!digest.ok) throw new Error("demo tree has a non-blob entry");
+	const tree = digest.digest;
 	const evidence = assumeCompleteMergeArtifactScan({
 		candidate_sha: sha,
 		tree_sha256: tree,
@@ -170,9 +191,11 @@ try {
 	const keyPath = path.join(outDir, "harness-authority.pub");
 	writeFileSync(bundlePath, `${JSON.stringify(signed.bundle, null, 2)}\n`);
 	writeFileSync(keyPath, `${signer.publicKeyDerHex}\n`);
+	const witnessKeyPath = path.join(outDir, "witness-runner.pub");
+	writeFileSync(witnessKeyPath, `${witnessSigner.publicKeySpkiHex}\n`);
 	log(`bundle ${path.relative(repoRoot, bundlePath)}; HARNESS authority key ${path.relative(repoRoot, keyPath)}`);
-	log(`$ node src/cli/verify.ts --trust-key ${path.relative(repoRoot, keyPath)} ${path.relative(repoRoot, bundlePath)}`);
-	const verify = spawnSync(process.execPath, [path.join(repoRoot, "src/cli/verify.ts"), "--trust-key", keyPath, bundlePath], { encoding: "utf8" });
+	log(`$ node src/cli/verify.ts --trust-key ${path.relative(repoRoot, keyPath)} --witness-key ${path.relative(repoRoot, witnessKeyPath)} ${path.relative(repoRoot, bundlePath)}`);
+	const verify = spawnSync(process.execPath, [path.join(repoRoot, "src/cli/verify.ts"), "--trust-key", keyPath, "--witness-key", witnessKeyPath, bundlePath], { encoding: "utf8" });
 	process.stdout.write(verify.stdout);
 	if (verify.status !== 0) {
 		process.stderr.write(verify.stderr);

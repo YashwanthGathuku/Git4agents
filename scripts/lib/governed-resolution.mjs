@@ -20,7 +20,7 @@
 
 import { buildConflictCapsuleV2 } from "../../src/lib/conflict-capsule.ts";
 import { safeGit } from "./safe-git.mjs";
-import { WITNESS_ATTESTATION_FORMAT, attestationBytes, parseCommitObject } from "../../src/lib/admission-proof.ts";
+import { buildAdmissionProof } from "./admission.mjs";
 import { authorityComposition, deleteRunRefs } from "./fork-crew.mjs";
 import { MainMovedError, publishMain, readMain, restoreCheckout } from "./main-ref.mjs";
 import {
@@ -37,7 +37,7 @@ import { witnessReport } from "./witness.mjs";
 /**
  * @typedef {import("./witness.mjs").LoadedWitnesses} LoadedWitnesses
  * @typedef {ReturnType<typeof import("./witness.mjs").freezeWitnesses>} FrozenWitnesses
- * @typedef {{ sign(payload: Uint8Array): Promise<{ signature: string }> }} WitnessSigner
+ * @typedef {import("./admission.mjs").WitnessSigner} WitnessSigner
  */
 
 /**
@@ -93,7 +93,7 @@ async function governInner(repo, crewRun, opts) {
 	/**
 	 * @param {"COMPOSED" | "CONFLICTED" | "RESOLVED"} status
 	 * @param {string | null} sha
-	 * @param {{ resolution?: any, witness_check?: any }} [extra]
+	 * @param {{ resolution?: any, witness_check?: any, rebased_onto?: string | null }} [extra]
 	 */
 	const record = (status, sha, extra = {}) =>
 		authorityComposition({
@@ -109,7 +109,12 @@ async function governInner(repo, crewRun, opts) {
 
 	if (crewRun.status === "COMPOSED") {
 		if (!opts.witnesses || !opts.frozen) {
-			return { status: /** @type {const} */ ("COMPOSED"), candidateSha: crewRun.sha, compositions: [record("COMPOSED", crewRun.sha)], witness: null };
+			return {
+				status: /** @type {const} */ ("COMPOSED"),
+				candidateSha: crewRun.sha,
+				compositions: [record("COMPOSED", crewRun.sha, crewRun.published_base ? { rebased_onto: crewRun.published_base } : {})],
+				witness: null,
+			};
 		}
 		const witness = witnessReport(repo, crewRun.sha, opts.witnesses, opts.frozen, {
 			requiredSides: opts.requiredSides ?? [],
@@ -139,7 +144,7 @@ async function governInner(repo, crewRun, opts) {
 		return {
 			status: /** @type {const} */ ("COMPOSED"),
 			candidateSha: crewRun.sha,
-			compositions: [record("COMPOSED", crewRun.sha, { witness_check })],
+			compositions: [record("COMPOSED", crewRun.sha, { witness_check, ...(crewRun.published_base ? { rebased_onto: crewRun.published_base } : {}) })],
 			witness,
 		};
 	}
@@ -203,7 +208,7 @@ async function governInner(repo, crewRun, opts) {
 	return {
 		status: /** @type {const} */ ("RESOLVED"),
 		candidateSha: result.sha,
-		compositions: [conflictedRecord, record("RESOLVED", result.sha, { resolution })],
+		compositions: [conflictedRecord, record("RESOLVED", result.sha, { resolution, ...(result.rebases?.length ? { rebased_onto: result.published_base } : {}) })],
 		capsule,
 		ladder: result,
 	};
@@ -257,13 +262,12 @@ function revertComposed(repo, crewRun) {
 }
 
 /**
- * Add an admission proof (src/lib/admission-proof.ts) to each COMPOSED or
- * RESOLVED record: the candidate's raw commit object, and, when the record
- * carries a witness verdict, the witness runner's signature over it.
+ * Add an admission proof (src/lib/admission-proof.ts, scripts/lib/admission.mjs)
+ * to each COMPOSED or RESOLVED record of the published candidate.
  *
  * @param {string} repo
  * @param {any[]} compositions
- * @param {{ taskHash: string, contenderId: string, witnessSigner: WitnessSigner }} opts
+ * @param {{ taskHash: string, witnessSigner: WitnessSigner }} opts
  * @param {{ candidateSha: string | null }} result
  */
 async function attachAdmissionProofs(repo, compositions, opts, result) {
@@ -275,31 +279,8 @@ async function attachAdmissionProofs(repo, compositions, opts, result) {
 			out.push(record);
 			continue;
 		}
-		const raw = safeGit(repo, ["cat-file", "commit", record.candidate_sha], { buffer: true }).raw;
-		if (!raw) throw new Error("admission proof: could not read the candidate commit");
-		const body = new Uint8Array(raw);
-		const witness = record.status === "RESOLVED" ? record.resolution?.witness ?? null : record.witness_check ?? null;
-		/** @type {any} */
-		let attestation = null;
-		if (witness) {
-			const payload = {
-				format: WITNESS_ATTESTATION_FORMAT,
-				task_hash: opts.taskHash,
-				contender_id: record.contender_id,
-				baseline: record.baseline,
-				contributing_shas: [...record.contributing_shas].sort(),
-				candidate_sha: record.candidate_sha,
-				candidate_tree: parseCommitObject(body).tree,
-				capsule_id: record.status === "RESOLVED" ? capsule : null,
-				witness_manifest_sha256: record.witness_manifest_sha256 ?? null,
-				witness_report_sha256: witness.witness_report_sha256,
-				verdict: witness.verdict,
-				review_cleared_by: witness.review_cleared_by ?? null,
-			};
-			const { signature } = await opts.witnessSigner.sign(attestationBytes(/** @type {any} */ (payload)));
-			attestation = { payload, signature };
-		}
-		out.push({ ...record, admission_proof: { commit_object: raw.toString("base64"), attestation } });
+		const admission_proof = await buildAdmissionProof(repo, record, { taskHash: opts.taskHash, capsuleId: capsule, signer: opts.witnessSigner });
+		out.push({ ...record, admission_proof });
 	}
 	return out;
 }
