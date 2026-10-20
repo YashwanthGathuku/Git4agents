@@ -10,7 +10,7 @@
  * fork() throws the known 10101 failure. This script never creates a second repo.
  *
  * Required:
- *   MADGRIX_BASE_URL, MADGRIX_TASK_ID, MADGRIX_AGENT_SERVICE_TOKEN
+ *   MADGRIX_BASE_URL, MADGRIX_TASK_ID, MADGRIX_AGENT_SERVICE_TOKEN (or MADGRIX_AGENT_SERVICE_TOKEN_FILE)
  *   MADGRIX_AGENT_SECRETS  one secret per parent and sub-agent
  *   MADGRIX_CLAIM_PATHS    the parent claim's bounded scope
  *
@@ -43,7 +43,25 @@ import { freezeWitnesses, loadWitnesses } from "./lib/witness.mjs";
 
 const baseUrl = process.env.MADGRIX_BASE_URL?.replace(/\/$/, "");
 const taskId = process.env.MADGRIX_TASK_ID;
-const agentServiceToken = process.env.MADGRIX_AGENT_SERVICE_TOKEN;
+// MADGRIX_AGENT_SERVICE_TOKEN_FILE keeps the token out of this process's
+// environment block, which a same-uid child could read via /proc/<pid>/environ.
+// The env variable is still accepted; resolvers never receive either.
+const agentServiceToken = readServiceToken();
+function readServiceToken() {
+	const file = process.env.MADGRIX_AGENT_SERVICE_TOKEN_FILE;
+	delete process.env.MADGRIX_AGENT_SERVICE_TOKEN_FILE;
+	if (file) {
+		try {
+			return readFileSync(file, "utf8").trim() || undefined;
+		} catch {
+			console.error("MADGRIX_AGENT_SERVICE_TOKEN_FILE is not readable");
+			process.exit(2);
+		}
+	}
+	const value = process.env.MADGRIX_AGENT_SERVICE_TOKEN;
+	delete process.env.MADGRIX_AGENT_SERVICE_TOKEN;
+	return value;
+}
 const keep = process.env.MADGRIX_KEEP_WORKSPACES === "1";
 const workRoot = process.env.MADGRIX_WORK_ROOT ?? os.tmpdir();
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -53,7 +71,7 @@ const claimPaths = (process.env.MADGRIX_CLAIM_PATHS ?? "")
 	.map((s) => s.trim())
 	.filter(Boolean);
 if (!baseUrl || !taskId || !agentServiceToken) {
-	console.error("Missing MADGRIX_BASE_URL, MADGRIX_TASK_ID, or MADGRIX_AGENT_SERVICE_TOKEN");
+	console.error("Missing MADGRIX_BASE_URL, MADGRIX_TASK_ID, or MADGRIX_AGENT_SERVICE_TOKEN(_FILE)");
 	process.exit(2);
 }
 if (claimPaths.length === 0 || claimPaths.includes("**")) {
