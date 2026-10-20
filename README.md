@@ -15,6 +15,18 @@ Git was designed around human developers, social review, branch permissions, and
 **＋ Bring your repo:** https://madgrix.ygathuku96.workers.dev/board/new  
 **MCP endpoint:** `POST https://madgrix.ygathuku96.workers.dev/mcp`
 
+## ICSE 2027 reviewers: run it without building
+
+The tool-demo paper is in [`paper/icse27-demo/`](paper/icse27-demo/main.pdf). Every result in it reproduces from one container, with no Cloudflare account:
+
+```sh
+docker run --rm ghcr.io/yashwanthgathuku/git4agents:icse27                          # governed-resolution demo, ends VERIFIED
+docker run --rm ghcr.io/yashwanthgathuku/git4agents:icse27 npm test                 # 482 tests
+docker run --rm ghcr.io/yashwanthgathuku/git4agents:icse27 npm run bench:resolution # the 204-attempt benchmark (about a minute)
+```
+
+The image is built from [`docker/demo.Dockerfile`](docker/demo.Dockerfile). The [reviewer-image workflow](.github/workflows/reviewer-image.yml) runs the tests, the demo and the benchmark inside it before publishing; the benchmark must match [the committed outcomes](bench/resolution/results/results.md) attempt for attempt. Without Docker: Node 22, Git 2.43 or later (2.39 is too old) and Python 3, then `npm ci` and the same `npm` commands.
+
 [![Git4agents landing page: hanging marquee, isometric repo mall preview, how-it-works steps, receipts of the real runs](docs/assets/landing.png)](https://madgrix.ygathuku96.workers.dev/)
 
 ## Demo video

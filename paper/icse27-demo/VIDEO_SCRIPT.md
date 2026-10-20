@@ -1,5 +1,12 @@
 # ICSE 2027 tool-demo video — script (target 4:00, limit 3–5 min)
 
+> **Status (2026-10-19):** a captioned version of this video exists (3:54, 1080p,
+> no voice; the call allows "optional voice-over or annotations"). Its scenes follow
+> this script: title, the task flow, the recorded live cheater run on the trust board,
+> offline verification and the one-byte tamper, `npm run demo:resolution`, the
+> benchmark table, and limits plus the container command. A voice-over can be laid
+> over it using the "Say" column below.
+
 The track requires a 3–5 minute YouTube video that is accessible during review.
 Every command below is real and runs from a checkout of the `governed-resolution`
 branch. Record at 1080p, terminal font ≥ 16 pt.

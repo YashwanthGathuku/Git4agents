@@ -49,3 +49,15 @@ jobs:
             docker push "$image:$t"
           done
           echo "Published $image with tags: $tags" >> "$GITHUB_STEP_SUMMARY"
+
+      # Reviewers pull without logging in, so the package must be public.
+      # A new GHCR package starts private; this step reports which it is.
+      - name: Can an anonymous reviewer pull it?
+        run: |
+          repo="${GITHUB_REPOSITORY_OWNER,,}/git4agents"
+          token="$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+          code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${token}" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+            "https://ghcr.io/v2/${repo}/manifests/${GITHUB_SHA::12}")"
+          if [ "$code" = 200 ]; then msg="Anonymous pull works: the package is public."; else msg="Anonymous pull failed (HTTP $code): make the package public in its GitHub settings."; fi
+          echo "$msg"; echo "$msg" >> "$GITHUB_STEP_SUMMARY"
