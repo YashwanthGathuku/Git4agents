@@ -2,6 +2,10 @@
 
 **The trust layer for agent-written code.**
 
+**Vibingcoding development:** [seven-day Nebius build plan](docs/VIBINGCODING_7_DAY_PLAN.md)
+and [initial release admission / Nebius adapter](docs/RELEASE_ADMISSION.md).
+These are new building blocks; the complete delivery-and-recovery loop remains in development.
+
 [![tests](https://img.shields.io/badge/tests-482%20passing-2ea44f)](test)
 [![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://madgrix.ygathuku96.workers.dev)

@@ -9,6 +9,7 @@
  *
  * Providers (LLM_PROVIDER):
  *   anthropic   ANTHROPIC_API_KEY, LLM_MODEL          (Messages API)
+ *   nebius      NEBIUS_API_KEY, LLM_MODEL             (Token Factory)
  *   workers-ai  WORKERS_AI_ACCOUNT_ID, WORKERS_AI_API_TOKEN, LLM_MODEL
  *               (use a token scoped to Workers AI only; never an account-wide
  *               Cloudflare token: docs/SECURITY.md, process-env boundaries)
@@ -82,6 +83,28 @@ export async function callModel(prompt, env, doFetch = fetch) {
 	const model = env.LLM_MODEL;
 	if (!model) throw new Error("LLM_MODEL is required");
 	const system = "You resolve merge conflicts by re-applying one change's intent onto another version. Output only what is asked.";
+	if (provider === "nebius") {
+		if (!env.NEBIUS_API_KEY) throw new Error("NEBIUS_API_KEY is required");
+		// Configure the model from the account's current catalog. Never silently
+		// fall back to a different provider or return reasoning as source code.
+		const base = (env.LLM_BASE_URL || "https://api.tokenfactory.nebius.com/v1").replace(/\/+$/, "");
+		const res = await doFetch(`${base}/chat/completions`, {
+			method: "POST",
+			headers: { "content-type": "application/json", authorization: `Bearer ${env.NEBIUS_API_KEY}` },
+			signal: AbortSignal.timeout(120_000),
+			body: JSON.stringify({
+				model, max_tokens: 8192, temperature: 0, stream: false,
+				messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
+			}),
+		});
+		if (!res.ok) throw new Error(`model call failed: HTTP ${res.status}`);
+		const body = /** @type {{ choices?: Array<{ finish_reason?: string, message?: { content?: unknown } }> }} */ (await res.json());
+		const choice = body?.choices?.[0];
+		if (choice?.finish_reason !== "stop") throw new Error("Nebius completion did not finish normally");
+		const content = choice.message?.content;
+		if (typeof content !== "string" || !content.trim()) throw new Error("Nebius completion has no answer text");
+		return content;
+	}
 	if (provider === "anthropic") {
 		if (!env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is required");
 		const base = env.LLM_BASE_URL || "https://api.anthropic.com";
@@ -118,7 +141,7 @@ export async function callModel(prompt, env, doFetch = fetch) {
 		const body = /** @type {{ result?: { response?: string } }} */ (await res.json());
 		return body.result?.response ?? "";
 	}
-	throw new Error("LLM_PROVIDER must be anthropic or workers-ai");
+	throw new Error("LLM_PROVIDER must be anthropic, nebius, or workers-ai");
 }
 
 async function main() {

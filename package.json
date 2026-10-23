@@ -17,6 +17,7 @@
     "slice": "node src/harness/slice.ts",
     "headmove": "node src/harness/head-move.ts",
     "verify": "node src/cli/verify.ts",
+    "release:admit": "node src/cli/admit-release.ts",
     "bench": "node src/lib/benchmark.ts",
     "attack:lab": "node scripts/attack-lab.ts",
     "fleet:10k": "node scripts/scale-10k.ts",
