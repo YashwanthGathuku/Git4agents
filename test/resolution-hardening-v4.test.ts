@@ -480,3 +480,24 @@ describe("round 4 item 7: a CAS loser rebases onto the new main and is re-verifi
 		assert.ok(MainMovedError);
 	});
 });
+
+describe("round 4: a candidate tree-digest/v1 cannot bind is reported, not thrown", () => {
+	it("a gitlink in a COMPOSED candidate yields admission_proof_error and no proof; the authority refuses it", async () => {
+		const repo = mkRepo({ README: "r\n" });
+		const nested = `mkdir -p vendor/x && cd vendor/x && git init -q && echo v > v && git add v && git -c user.email=a@b -c user.name=a commit -qm v`;
+		const cfg = mkCrew([
+			{ id: "s1", command: nested },
+			{ id: "s2", command: `printf "z\\n" > z` },
+		]);
+		const crew = loadForkCrew(cfg);
+		const run = await runCrewOnFork(repo, crew, undefined, noGate);
+		const signer = await runnerKey();
+		const g = await governCrewResult(repo, run, { taskHash: TASK, contenderId: "c1", witnesses: null, frozen: null, mode: "command", command: GOOD, witnessSigner: signer });
+		assert.equal(g.status, "COMPOSED");
+		assert.match(String(g.admission_proof_error), /tree-digest\/v1 cannot bind commit vendor\/x/);
+		const composed = g.compositions.find((c: CompositionRecord) => c.status === "COMPOSED");
+		assert.ok(composed && !("admission_proof" in composed));
+		const ctx = await ctxFor([signer.publicKeySpkiHex]);
+		await assert.rejects(recordAll(authority(run.baseline), g.compositions, ctx), /requires an admission_proof/);
+	});
+});

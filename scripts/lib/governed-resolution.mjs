@@ -77,10 +77,19 @@ export async function governCrewResult(repo, crewRun, opts) {
 		} else refs = { run_refs: "kept", forensic_ref: runRef };
 	}
 	let proofs = null;
+	/** @type {string | null} */
+	let proofError = null;
 	if (opts.witnessSigner && result.candidateSha) {
-		proofs = await attachAdmissionProofs(repo, result.compositions, { ...opts, witnessSigner: opts.witnessSigner }, result);
+		try {
+			proofs = await attachAdmissionProofs(repo, result.compositions, { ...opts, witnessSigner: opts.witnessSigner }, result);
+		} catch (error) {
+			// No proof can be built (e.g. a gitlink that tree-digest/v1 cannot bind).
+			// Report it instead of throwing: the records stay proof-less, so an
+			// authority with a pinned runner key refuses them.
+			proofError = error instanceof Error ? error.message : String(error);
+		}
 	}
-	return { ...result, ...refs, ...(proofs ? { compositions: proofs } : {}) };
+	return { ...result, ...refs, ...(proofs ? { compositions: proofs } : {}), ...(proofError ? { admission_proof_error: proofError } : {}) };
 }
 
 /**
