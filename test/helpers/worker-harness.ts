@@ -152,6 +152,9 @@ export async function makeTask(fake: FakeArtifacts = new FakeArtifacts()): Promi
 			(state) =>
 				new TaskAuthority(state as never, {
 					AUTHORITY_SIGNING_KEY: key.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+					// Route tests record synthetic compositions; the admission
+					// proof is covered with a real key in resolution-hardening-v3/v4.
+					MADGRIX_INSECURE_UNPINNED_WITNESS_RUNNER: "1",
 				}),
 		),
 		PROMOTION_CONTAINER: memoryNamespace(() => ({

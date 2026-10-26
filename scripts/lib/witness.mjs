@@ -26,14 +26,18 @@
  * Children get the minimal environment only.
  */
 
-import { spawnSync } from "node:child_process";
+import { runContained } from "./sandbox.mjs";
+
+/** @param {string} s */
+const shellQuote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { canonicalJson } from "../../src/lib/canonical.ts";
 import { minimalEnv } from "./child-env.mjs";
+import { safeGit } from "./safe-git.mjs";
 
 export const WITNESS_MANIFEST_VERSION = "madgrix-witness-manifest/v1";
 export const WITNESS_REPORT_VERSION = "madgrix-witness-report/v1";
@@ -125,6 +129,7 @@ export function loadWitnesses(configPath, crew) {
  */
 function checkouts(repo) {
 	const root = mkdtempSync(path.join(os.tmpdir(), "madgrix-witness-trees-"));
+	chmodSync(root, 0o700);
 	const scriptsDir = mkdtempSync(path.join(os.tmpdir(), "madgrix-witness-scripts-"));
 	/** @type {Map<string, string>} */
 	const trees = new Map();
@@ -134,12 +139,20 @@ function checkouts(repo) {
 			const known = trees.get(sha);
 			if (known) return known;
 			const dir = path.join(root, `t${trees.size}`);
-			const r = spawnSync("git", ["worktree", "add", "--detach", "--quiet", dir, sha], {
-				cwd: repo,
-				encoding: "utf8",
-				env: minimalEnv(),
-			});
-			if (r.status !== 0) throw new Error(`witness checkout of ${sha} failed: ${(r.stderr ?? "").trim()}`);
+			// No `git worktree add` / `checkout`: those run hooks a resolver or a
+			// sub-agent could have planted. A private index plus checkout-index
+			// writes the tree (modes included) and runs nothing. The tree is not
+			// a git repository.
+			mkdirSync(dir, { recursive: true });
+			const index = path.join(root, `index-${trees.size}`);
+			try {
+				safeGit(repo, ["read-tree", sha], { env: { GIT_INDEX_FILE: index } });
+				safeGit(repo, ["checkout-index", "-a", "-f", `--prefix=${dir}${path.sep}`], { env: { GIT_INDEX_FILE: index } });
+			} catch (error) {
+				throw new Error(`witness checkout of ${sha} failed: ${/** @type {Error} */ (error).message}`);
+			} finally {
+				rmSync(index, { force: true });
+			}
 			trees.set(sha, dir);
 			return dir;
 		},
@@ -153,10 +166,6 @@ function checkouts(repo) {
 			return file;
 		},
 		dispose() {
-			for (const dir of trees.values()) {
-				spawnSync("git", ["worktree", "remove", "--force", dir], { cwd: repo, env: minimalEnv() });
-			}
-			spawnSync("git", ["worktree", "prune"], { cwd: repo, env: minimalEnv() });
 			rmSync(root, { recursive: true, force: true });
 			rmSync(scriptsDir, { recursive: true, force: true });
 		},
@@ -173,13 +182,18 @@ function checkouts(repo) {
 function run(trees, script, sha, timeoutMs) {
 	const cwd = trees.tree(sha);
 	const file = trees.scriptFile(script);
-	const r = spawnSync(script.kind === "node" ? process.execPath : "bash", [file], {
+	// The replay runs candidate code: contained like a resolver (bubblewrap,
+	// fail closed; sandbox.mjs). Only its own checkout is writable.
+	const interpreter = script.kind === "node" ? process.execPath : "bash";
+	const r = runContained({
+		command: `exec ${shellQuote(interpreter)} ${shellQuote(file)}`,
 		cwd,
-		encoding: "utf8",
-		timeout: timeoutMs,
+		writable: [cwd],
 		env: minimalEnv({ MADGRIX_WITNESS_ID: script.id }),
+		timeoutMs,
+		purpose: "witness",
 	});
-	return r.status === 0 && !r.error ? "pass" : "fail";
+	return r.status === 0 && !r.timedOut && !r.error ? "pass" : "fail";
 }
 
 /**

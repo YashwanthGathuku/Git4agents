@@ -17,14 +17,16 @@
  * whose output is gated again.
  */
 
-import { spawnSync } from "node:child_process";
 
 import { buildConflictCapsuleV2 } from "../../src/lib/conflict-capsule.ts";
-import { minimalEnv } from "./child-env.mjs";
-import { authorityComposition } from "./fork-crew.mjs";
+import { safeGit } from "./safe-git.mjs";
+import { buildAdmissionProof } from "./admission.mjs";
+import { authorityComposition, deleteRunRefs } from "./fork-crew.mjs";
+import { MainMovedError, publishMain, readMain, restoreCheckout } from "./main-ref.mjs";
 import {
 	REPLAYER_ENV_NAMES,
 	findMergiraf,
+	publishCandidate,
 	resolutionRecord,
 	resolveWithCommand,
 	resolveWithLadder,
@@ -35,6 +37,7 @@ import { witnessReport } from "./witness.mjs";
 /**
  * @typedef {import("./witness.mjs").LoadedWitnesses} LoadedWitnesses
  * @typedef {ReturnType<typeof import("./witness.mjs").freezeWitnesses>} FrozenWitnesses
+ * @typedef {import("./admission.mjs").WitnessSigner} WitnessSigner
  */
 
 /**
@@ -54,14 +57,52 @@ import { witnessReport } from "./witness.mjs";
  *   requiredSides?: string[],
  *   reviewClearedBy?: string | null,
  *   timeoutMs?: number,
+ *   witnessSigner?: WitnessSigner,
  * }} opts
  */
 export async function governCrewResult(repo, crewRun, opts) {
+	const result = await governInner(repo, crewRun, opts);
+	// Run refs keep the sub-agent commits reachable. Once the candidate is on
+	// main they are reachable through its parents and are deleted; a run that
+	// did not publish keeps them for forensics (prune with
+	// `npm run prune:runs -- <repo> [--older-than-days N]`).
+	const runRef = /** @type {{ run_ref?: string }} */ (crewRun).run_ref;
+	/** @type {{ run_refs: "deleted" | "kept" | "none", forensic_ref: string | null }} */
+	let refs = { run_refs: "none", forensic_ref: null };
+	if (runRef) {
+		const published = result.candidateSha !== null && readMain(repo) === result.candidateSha;
+		if (published) {
+			deleteRunRefs(repo, runRef);
+			refs = { run_refs: "deleted", forensic_ref: null };
+		} else refs = { run_refs: "kept", forensic_ref: runRef };
+	}
+	let proofs = null;
+	/** @type {string | null} */
+	let proofError = null;
+	if (opts.witnessSigner && result.candidateSha) {
+		try {
+			proofs = await attachAdmissionProofs(repo, result.compositions, { ...opts, witnessSigner: opts.witnessSigner }, result);
+		} catch (error) {
+			// No proof can be built (e.g. a gitlink that tree-digest/v1 cannot bind).
+			// Report it instead of throwing: the records stay proof-less, so an
+			// authority with a pinned runner key refuses them.
+			proofError = error instanceof Error ? error.message : String(error);
+		}
+	}
+	return { ...result, ...refs, ...(proofs ? { compositions: proofs } : {}), ...(proofError ? { admission_proof_error: proofError } : {}) };
+}
+
+/**
+ * @param {string} repo
+ * @param {Parameters<typeof governCrewResult>[1]} crewRun
+ * @param {Parameters<typeof governCrewResult>[2]} opts
+ */
+async function governInner(repo, crewRun, opts) {
 	const manifestSha = opts.witnesses?.sha256 ?? null;
 	/**
 	 * @param {"COMPOSED" | "CONFLICTED" | "RESOLVED"} status
 	 * @param {string | null} sha
-	 * @param {{ resolution?: any, witness_check?: any }} [extra]
+	 * @param {{ resolution?: any, witness_check?: any, rebased_onto?: string | null }} [extra]
 	 */
 	const record = (status, sha, extra = {}) =>
 		authorityComposition({
@@ -77,25 +118,31 @@ export async function governCrewResult(repo, crewRun, opts) {
 
 	if (crewRun.status === "COMPOSED") {
 		if (!opts.witnesses || !opts.frozen) {
-			return { status: /** @type {const} */ ("COMPOSED"), candidateSha: crewRun.sha, compositions: [record("COMPOSED", crewRun.sha)], witness: null };
+			return {
+				status: /** @type {const} */ ("COMPOSED"),
+				candidateSha: crewRun.sha,
+				compositions: [record("COMPOSED", crewRun.sha, crewRun.published_base ? { rebased_onto: crewRun.published_base } : {})],
+				witness: null,
+			};
 		}
 		const witness = witnessReport(repo, crewRun.sha, opts.witnesses, opts.frozen, {
 			requiredSides: opts.requiredSides ?? [],
 			timeoutMs: opts.timeoutMs,
 		});
 		if (witness.verdict === "REFUSE") {
-			resetMain(repo, crewRun.baseline);
+			const main_revert = revertComposed(repo, crewRun);
 			return {
 				status: /** @type {const} */ ("SEMANTIC_CONFLICT"),
 				candidateSha: null,
 				compositions: [],
 				witness,
 				detail: `the crew's edits merged cleanly as text, but ${witness.report.reasons.join("; ")}`,
+				main_revert,
 			};
 		}
 		if (witness.verdict === "REVIEW" && !opts.reviewClearedBy) {
-			resetMain(repo, crewRun.baseline);
-			return { status: /** @type {const} */ ("REVIEW"), candidateSha: null, compositions: [], witness, detail: witness.report.reasons.join("; ") };
+			const main_revert = revertComposed(repo, crewRun);
+			return { status: /** @type {const} */ ("REVIEW"), candidateSha: null, compositions: [], witness, detail: witness.report.reasons.join("; "), main_revert };
 		}
 		const witness_check = {
 			witness_manifest_sha256: manifestSha,
@@ -106,7 +153,7 @@ export async function governCrewResult(repo, crewRun, opts) {
 		return {
 			status: /** @type {const} */ ("COMPOSED"),
 			candidateSha: crewRun.sha,
-			compositions: [record("COMPOSED", crewRun.sha, { witness_check })],
+			compositions: [record("COMPOSED", crewRun.sha, { witness_check, ...(crewRun.published_base ? { rebased_onto: crewRun.published_base } : {}) })],
 			witness,
 		};
 	}
@@ -142,7 +189,16 @@ export async function governCrewResult(repo, crewRun, opts) {
 		if (!opts.reviewClearedBy || !clearable) {
 			return { status: /** @type {const} */ ("REVIEW"), candidateSha: null, compositions: [conflictedRecord], capsule, review: result };
 		}
-		resetMain(repo, clearable.candidate.sha);
+		const refused = publishCandidate(repo, crewRun, clearable.candidate.sha);
+		if (refused) {
+			return {
+				status: /** @type {const} */ ("REVIEW"),
+				candidateSha: null,
+				compositions: [conflictedRecord],
+				capsule,
+				review: { ...result, reason: `the cleared candidate was not published: ${refused}` },
+			};
+		}
 		const resolution = resolutionRecord(
 			{ ...clearable.candidate, order_agreement: clearable.agreement },
 			{ capsuleId: capsule.capsule_id, witnessManifestSha256: manifestSha, reviewClearedBy: opts.reviewClearedBy },
@@ -161,7 +217,7 @@ export async function governCrewResult(repo, crewRun, opts) {
 	return {
 		status: /** @type {const} */ ("RESOLVED"),
 		candidateSha: result.sha,
-		compositions: [conflictedRecord, record("RESOLVED", result.sha, { resolution })],
+		compositions: [conflictedRecord, record("RESOLVED", result.sha, { resolution, ...(result.rebases?.length ? { rebased_onto: result.published_base } : {}) })],
 		capsule,
 		ladder: result,
 	};
@@ -190,11 +246,50 @@ function clearableCandidate(repo, candidates) {
 }
 
 /**
+ * Take a refused COMPOSED candidate back off main with compare-and-swap: main
+ * returns to where it was before the crew only if it is still at the
+ * candidate. When another run moved main since, main is left alone and the
+ * result says so.
  * @param {string} repo
- * @param {string} sha
+ * @param {{ baseline: string, sha: string | null, main_before?: string | null }} crewRun
+ * @returns {"reverted" | string}
  */
-function resetMain(repo, sha) {
-	spawnSync("git", ["checkout", "-B", "main", sha], { cwd: repo, env: minimalEnv() });
-	spawnSync("git", ["reset", "--hard", sha], { cwd: repo, env: minimalEnv() });
-	spawnSync("git", ["clean", "-fd"], { cwd: repo, env: minimalEnv() });
+function revertComposed(repo, crewRun) {
+	const before = crewRun.main_before === undefined ? crewRun.baseline : crewRun.main_before;
+	if (!crewRun.sha || before === null) {
+		restoreCheckout(repo, crewRun.baseline);
+		return "reverted";
+	}
+	try {
+		publishMain(repo, before, crewRun.sha);
+		return "reverted";
+	} catch (error) {
+		restoreCheckout(repo, crewRun.baseline);
+		if (error instanceof MainMovedError) return `not reverted: ${error.message}`;
+		throw error;
+	}
+}
+
+/**
+ * Add an admission proof (src/lib/admission-proof.ts, scripts/lib/admission.mjs)
+ * to each COMPOSED or RESOLVED record of the published candidate.
+ *
+ * @param {string} repo
+ * @param {any[]} compositions
+ * @param {{ taskHash: string, witnessSigner: WitnessSigner }} opts
+ * @param {{ candidateSha: string | null }} result
+ */
+async function attachAdmissionProofs(repo, compositions, opts, result) {
+	/** @type {string | null} */
+	const capsule = compositions.find((c) => c.status === "CONFLICTED")?.capsule_id ?? null;
+	const out = [];
+	for (const record of compositions) {
+		if ((record.status !== "COMPOSED" && record.status !== "RESOLVED") || record.candidate_sha !== result.candidateSha) {
+			out.push(record);
+			continue;
+		}
+		const admission_proof = await buildAdmissionProof(repo, record, { taskHash: opts.taskHash, capsuleId: capsule, signer: opts.witnessSigner });
+		out.push({ ...record, admission_proof });
+	}
+	return out;
 }

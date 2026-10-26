@@ -22,8 +22,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { sha256Hex } from "../lib/canonical.ts";
 import { verifyBundle, type PromotionBundle, type Signer, type VerifyLine } from "../lib/attestation.ts";
 import { SELECTOR_POLICY_INPUT } from "../do/TaskAuthority.ts";
+import { parseWitnessRunnerKeys, type WitnessRunnerKeys } from "../lib/admission-proof.ts";
 
-const USAGE = "usage: node src/cli/verify.ts [--trust-key <public-key-file>] <bundle-path>";
+const USAGE =
+	"usage: node src/cli/verify.ts [--trust-key <public-key-file>] [--witness-key <public-key-file>]... [--revoked-witness-keys <id,id>] <bundle-path>";
 
 /** The repository's pinned authority key, used when --trust-key is not given. */
 export const DEFAULT_TRUST_KEY_PATH = fileURLToPath(new URL("../../keys/authority.pub", import.meta.url));
@@ -80,11 +82,12 @@ export function parseTrustedKey(text: string): string {
 export async function verifyWithTrustedKey(
 	bundle: PromotionBundle,
 	trustedKeyDerHex: string,
+	witnessRunnerKeys: WitnessRunnerKeys | null = null,
 ): Promise<{ lines: VerifyLine[]; verified: boolean }> {
 	const signer = buildVerifyOnlySigner(trustedKeyDerHex);
 	// The frozen selector-policy identity (same input the authority hashed).
 	const policyHash = await sha256Hex(SELECTOR_POLICY_INPUT);
-	return verifyBundle(bundle, signer, { policyHash, trustedKeyDerHex });
+	return verifyBundle(bundle, signer, { policyHash, trustedKeyDerHex, witnessRunnerKeys });
 }
 
 /** The transcript lines, in order (spec 4 §7 as amended by authority-signing-v1
@@ -106,9 +109,19 @@ const TRANSCRIPT_LABELS = [
 async function main(): Promise<number> {
 	let bundlePath: string | undefined;
 	let trustKeyPath: string | undefined;
+	const witnessKeyPaths: string[] = [];
+	let revokedWitnessKeys = "";
 	const args = process.argv.slice(2);
 	for (let i = 0; i < args.length; i++) {
-		if (args[i] === "--trust-key") {
+		if (args[i] === "--witness-key" || args[i] === "--revoked-witness-keys") {
+			const value = args[++i];
+			if (value === undefined) {
+				console.error(USAGE);
+				return 2;
+			}
+			if (args[i - 1] === "--witness-key") witnessKeyPaths.push(value);
+			else revokedWitnessKeys = value;
+		} else if (args[i] === "--trust-key") {
 			trustKeyPath = args[++i];
 			if (trustKeyPath === undefined) {
 				console.error(USAGE);
@@ -161,7 +174,25 @@ async function main(): Promise<number> {
 		return 2;
 	}
 
-	const { lines, verified } = await verifyWithTrustedKey(bundle, trustedKeyDerHex);
+	// Witness runner keys: --witness-key files, else MADGRIX_WITNESS_RUNNER_PUBLIC_KEY.
+	let witnessKeysText = process.env.MADGRIX_WITNESS_RUNNER_PUBLIC_KEY ?? "";
+	if (witnessKeyPaths.length > 0) {
+		const parts: string[] = [];
+		for (const file of witnessKeyPaths) {
+			try {
+				parts.push(parseTrustedKey(await readFile(file, "utf8")));
+			} catch (err) {
+				console.error(`witness key ${file}: ${(err as Error).message}`);
+				return 2;
+			}
+		}
+		witnessKeysText = parts.join(",");
+	}
+	const witnessRunnerKeys = await parseWitnessRunnerKeys(
+		witnessKeysText,
+		revokedWitnessKeys || process.env.MADGRIX_WITNESS_RUNNER_REVOKED_KEY_IDS || "",
+	);
+	const { lines, verified } = await verifyWithTrustedKey(bundle, trustedKeyDerHex, witnessRunnerKeys);
 	const byLabel = new Map(lines.map((l) => [l.label, l.status]));
 	for (const label of TRANSCRIPT_LABELS) {
 		const status = byLabel.get(label) ?? "FAIL";
